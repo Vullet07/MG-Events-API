@@ -22,10 +22,15 @@ namespace Data
         {
             base.OnModelCreating(modelBuilder);
 
+            modelBuilder.Entity<User>()
+                .HasIndex(u => u.Username)
+                .IsUnique();
+
             modelBuilder.Entity<User>(entity =>
             {
                 entity.HasKey(u => u.Id);
                 entity.Property(u => u.Username).IsRequired().HasMaxLength(200);
+                entity.Property(u => u.PasswordHash).IsRequired();
                 entity.Property(u => u.Role).IsRequired();
                 entity.Property(u => u.PhotoUrl).HasMaxLength(500);
             });
