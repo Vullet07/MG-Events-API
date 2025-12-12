@@ -14,8 +14,8 @@ namespace Data.Models
 
         [MaxLength(200)]
         public required string Username { get; set; }
-
-        public required string PasswordHash { get; set; }
+        [Required]
+        public string? PasswordHash { get; set; }
 
         [Required]
         public Role Role { get; set; }
