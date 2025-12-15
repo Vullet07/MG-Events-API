@@ -20,13 +20,14 @@ namespace Services.JwtService
             _settings = settings.Value;
         }
 
-        public string GenerateToken(string userId, string role)
+        public string GenerateToken(string userId, string role, string userName)
         {
             var claims = new[]
             {
-            new Claim(JwtRegisteredClaimNames.Sub, userId),
-            new Claim(ClaimTypes.Role, role)
-        };
+        new Claim(JwtRegisteredClaimNames.Sub, userId),
+        new Claim(ClaimTypes.Name, userName),
+        new Claim(ClaimTypes.Role, role)
+    };
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings.Key));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -36,7 +37,8 @@ namespace Services.JwtService
                 audience: _settings.Audience,
                 claims: claims,
                 expires: DateTime.UtcNow.AddMinutes(_settings.ExpiresInMinutes),
-                signingCredentials: creds);
+                signingCredentials: creds
+            );
 
             return new JwtSecurityTokenHandler().WriteToken(token);
         }

@@ -41,7 +41,7 @@ namespace WebAPI.Controllers
             if (verifyResult == PasswordVerificationResult.Failed)
                 return Unauthorized("Invalid username or password.");
 
-            var token = _tokenService.GenerateToken(user.Id.ToString(), user.Role.ToString());
+            var token = _tokenService.GenerateToken(user.Id.ToString(), user.Role.ToString(), user.Username);
 
             return Ok(new { token });
         }
