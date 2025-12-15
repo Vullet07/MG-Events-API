@@ -16,7 +16,7 @@ namespace Data
         
         public DbSet<ForumPost> ForumPosts { get; set; }
         
-        public DbSet<ForumThread> ForumThread { get; set; }
+        public DbSet<ForumThread> ForumThreads { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
