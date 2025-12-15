@@ -7,6 +7,7 @@ using Microsoft.OpenApi.Models;
 using Services.AuthUserService;
 using Services.JwtService;
 using System.Text;
+using System.Text.Json.Serialization;
 using WebAPI.Controllers;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -17,6 +18,11 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddOpenApi();
+
+builder.Services.AddSwaggerGen(options =>
+{
+    options.UseInlineDefinitionsForEnums();
+});
 
 // Database
 
@@ -77,6 +83,17 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
 });
+
+// Serialization
+
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(
+            new JsonStringEnumConverter()
+        );
+    });
+
 
 // Interface registrations
 
