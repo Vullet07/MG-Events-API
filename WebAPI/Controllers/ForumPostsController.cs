@@ -6,13 +6,14 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Services.AuthUserService;
 using Services.Dtos;
+using WebAPI.Extensions;
 
 namespace WebAPI.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
     [Authorize]
-    public class ForumPostsController : ControllerBase
+    public class ForumPostsController : ApiControllerBase
     {
         private readonly AppDbContext _db;
         private readonly IAuthUserService _authUser;
@@ -28,13 +29,14 @@ namespace WebAPI.Controllers
         public async Task<IActionResult> Create([FromBody] CreateForumPostDto dto)
         {
             if (!ModelState.IsValid)
-                return BadRequest(ModelState);
+                return ToApiValidationFail("Invalid post data.");
 
             var thread = await _db.ForumThreads.FindAsync(dto.ThreadId);
             if (thread == null)
-                return NotFound("Thread not found.");
+                return ToApiValidationFail("Thread not found.", 404);
+
             if (thread.IsLocked)
-                return BadRequest("Thread is locked.");
+                return ToApiValidationFail("Thread is locked.");
 
             ForumPost? parentPost = null;
             if (dto.ParentPostId.HasValue)
@@ -44,15 +46,19 @@ namespace WebAPI.Controllers
                     .FirstOrDefaultAsync(p => p.Id == dto.ParentPostId);
 
                 if (parentPost == null)
-                    return NotFound("Parent post not found.");
+                    return ToApiValidationFail("Parent post not found.", 404);
             }
+
+            var user = await _db.Users.FindAsync(_authUser.Id);
+            if (user == null)
+                return ToApiValidationFail("Authenticated user not found.", 401);
 
             var post = new ForumPost
             {
                 Title = dto.Title,
                 Content = dto.Content,
                 Thread = thread,
-                User = await _db.Users.FindAsync(_authUser.Id),
+                User = user,
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -63,18 +69,21 @@ namespace WebAPI.Controllers
 
             await _db.SaveChangesAsync();
 
-            return Ok(new ForumPostDto
+            var postDto = new ForumPostDto
             {
                 Id = post.Id,
                 Title = post.Title,
                 Content = post.Content,
                 CreatedAt = post.CreatedAt,
                 UpdatedAt = post.UpdatedAt,
-                UserId = post.User!.Id,
+                UserId = post.User.Id,
                 ThreadId = thread.Id
-            });
+            };
+
+            return ToApiValidationSuccess(postDto, "Post created successfully.");
         }
 
+        // ---------------- Get posts by thread ----------------
         [AllowAnonymous]
         [HttpGet("thread/{threadId:int}")]
         public async Task<IActionResult> GetByThread(int threadId)
@@ -94,9 +103,10 @@ namespace WebAPI.Controllers
                 })
                 .ToListAsync();
 
-            return Ok(posts);
+            return ToApiValidationSuccess(posts);
         }
 
+        // ---------------- Delete post ----------------
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> Delete(int id)
         {
@@ -105,14 +115,14 @@ namespace WebAPI.Controllers
                 .FirstOrDefaultAsync(p => p.Id == id);
 
             if (post == null)
-                return NotFound();
+                return ToApiValidationFail("Post not found.", 404);
 
             post.IsDeleted = true;
             post.UpdatedAt = DateTime.UtcNow;
 
             await _db.SaveChangesAsync();
 
-            return NoContent();
+            return ToApiValidationSuccess("Post deleted successfully.");
         }
     }
 }
