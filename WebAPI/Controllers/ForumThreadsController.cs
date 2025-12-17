@@ -6,12 +6,13 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Services.AuthUserService;
 using Services.Dtos;
+using WebAPI.Extensions;
 
 namespace WebAPI.Controllers
 {
     [ApiController]
     [Route("api/forum-threads")]
-    public class ForumThreadsController : ControllerBase
+    public class ForumThreadsController : ApiControllerBase
     {
         private readonly AppDbContext _db;
         private readonly IAuthUserService _authUser;
@@ -28,11 +29,11 @@ namespace WebAPI.Controllers
         public async Task<IActionResult> Create([FromBody] CreateForumThreadDto dto)
         {
             if (!ModelState.IsValid)
-                return BadRequest(ModelState);
+                return ToApiValidationFail("Invalid thread data.");
 
             var user = await _db.Users.FindAsync(_authUser.Id);
             if (user == null)
-                return Unauthorized();
+                return ToApiValidationFail("Authenticated user not found.", 401);
 
             var thread = new ForumThread
             {
@@ -46,7 +47,7 @@ namespace WebAPI.Controllers
             _db.ForumThreads.Add(thread);
             await _db.SaveChangesAsync();
 
-            return Ok(ToDto(thread));
+            return ToApiValidationSuccess(ToDto(thread), "Thread created successfully.");
         }
 
         // ---------------- Get all threads ----------------
@@ -57,19 +58,10 @@ namespace WebAPI.Controllers
             var threads = await _db.ForumThreads
                 .OrderByDescending(t => t.IsPinned)
                 .ThenByDescending(t => t.LastPostAt ?? t.CreatedAt)
-                .Select(t => new ForumThreadDto
-                {
-                    Id = t.Id,
-                    Title = t.Title,
-                    IsLocked = t.IsLocked,
-                    IsPinned = t.IsPinned,
-                    CreatedAt = t.CreatedAt,
-                    LastPostAt = t.LastPostAt,
-                    CreatedByUserId = t.CreatedByUser.Id
-                })
+                .Select(t => ToDto(t))
                 .ToListAsync();
 
-            return Ok(threads);
+            return ToApiValidationSuccess(threads);
         }
 
         // ---------------- Get single thread ----------------
@@ -82,24 +74,24 @@ namespace WebAPI.Controllers
                 .FirstOrDefaultAsync(t => t.Id == id);
 
             if (thread == null)
-                return NotFound();
+                return ToApiValidationFail("Thread not found.", 404);
 
-            return Ok(ToDto(thread));
+            return ToApiValidationSuccess(ToDto(thread));
         }
 
-        // ---------------- Lock / unlock (Boss only) ----------------
+        // ---------------- Lock / unlock ----------------
         [Authorize]
         [HttpPut("{id:int}/lock")]
         public async Task<IActionResult> Lock(int id)
         {
             var thread = await _db.ForumThreads.FindAsync(id);
             if (thread == null)
-                return NotFound();
+                return ToApiValidationFail("Thread not found.", 404);
 
             thread.IsLocked = true;
             await _db.SaveChangesAsync();
 
-            return NoContent();
+            return ToApiValidationSuccess("Thread locked successfully.");
         }
 
         [Authorize]
@@ -108,27 +100,27 @@ namespace WebAPI.Controllers
         {
             var thread = await _db.ForumThreads.FindAsync(id);
             if (thread == null)
-                return NotFound();
+                return ToApiValidationFail("Thread not found.", 404);
 
             thread.IsLocked = false;
             await _db.SaveChangesAsync();
 
-            return NoContent();
+            return ToApiValidationSuccess("Thread unlocked successfully.");
         }
 
-        // ---------------- Pin / unpin (Boss only) ----------------
+        // ---------------- Pin / unpin ----------------
         [Authorize]
         [HttpPut("{id:int}/pin")]
         public async Task<IActionResult> Pin(int id)
         {
             var thread = await _db.ForumThreads.FindAsync(id);
             if (thread == null)
-                return NotFound();
+                return ToApiValidationFail("Thread not found.", 404);
 
             thread.IsPinned = true;
             await _db.SaveChangesAsync();
 
-            return NoContent();
+            return ToApiValidationSuccess("Thread pinned successfully.");
         }
 
         [Authorize]
@@ -137,12 +129,12 @@ namespace WebAPI.Controllers
         {
             var thread = await _db.ForumThreads.FindAsync(id);
             if (thread == null)
-                return NotFound();
+                return ToApiValidationFail("Thread not found.", 404);
 
             thread.IsPinned = false;
             await _db.SaveChangesAsync();
 
-            return NoContent();
+            return ToApiValidationSuccess("Thread unpinned successfully.");
         }
 
         // ---------------- Helper ----------------
