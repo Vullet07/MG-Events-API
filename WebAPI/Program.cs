@@ -1,3 +1,4 @@
+using AspNetCoreRateLimit;
 using Data;
 using Data.Models;
 using Microsoft.AspNetCore.Identity;
@@ -23,6 +24,20 @@ builder.Services.AddSwaggerGen(options =>
 {
     options.UseInlineDefinitionsForEnums();
 });
+
+// RATE LIMITING
+
+builder.Services.AddMemoryCache();
+
+builder.Services.Configure<IpRateLimitOptions>(
+    builder.Configuration.GetSection("IpRateLimiting"));
+
+builder.Services.Configure<IpRateLimitPolicies>(
+    builder.Configuration.GetSection("IpRateLimitPolicies"));
+
+builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
+builder.Services.AddSingleton<IIpPolicyStore, MemoryCacheIpPolicyStore>();
+builder.Services.AddSingleton<IRateLimitCounterStore, MemoryCacheRateLimitCounterStore>();
 
 // CORS
 
@@ -133,6 +148,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("AllowFrontend");
+
+app.UseIpRateLimiting();
 
 app.UseAuthentication();
 

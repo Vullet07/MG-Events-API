@@ -56,6 +56,7 @@ namespace WebAPI.Controllers
         public async Task<IActionResult> GetAll()
         {
             var threads = await _db.ForumThreads
+                .Include(t => t.CreatedByUser)
                 .OrderByDescending(t => t.IsPinned)
                 .ThenByDescending(t => t.LastPostAt ?? t.CreatedAt)
                 .Select(t => ToDto(t))
