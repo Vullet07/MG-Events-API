@@ -1,3 +1,4 @@
+using AspNetCoreRateLimit;
 using Data;
 using Data.Models;
 using Microsoft.AspNetCore.Identity;
@@ -9,6 +10,7 @@ using Services.JwtService;
 using System.Text;
 using System.Text.Json.Serialization;
 using WebAPI.Controllers;
+using WebAPI.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -120,6 +122,7 @@ builder.Services.AddScoped<IAuthUserService, AuthUserService>();
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddAuthorization();
+builder.Services.AddMemoryCache();
 
 var app = builder.Build();
 
@@ -135,6 +138,8 @@ if (app.Environment.IsDevelopment())
 app.UseCors("AllowFrontend");
 
 app.UseAuthentication();
+
+app.UseMiddleware<RateLimitingMiddleware>();
 
 app.UseAuthorization();
 
