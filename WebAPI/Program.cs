@@ -137,11 +137,11 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors("AllowFrontend");
 
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+
 app.UseAuthentication();
 
 app.UseMiddleware<RateLimitingMiddleware>();
-
-app.UseAuthorization();
 
 if (app.Environment.IsDevelopment())
 {
