@@ -53,16 +53,31 @@ namespace WebAPI.Controllers
         // ---------------- Get all threads ----------------
         [AllowAnonymous]
         [HttpGet]
-        public async Task<IActionResult> GetAll()
+        public async Task<IActionResult> GetAll([FromQuery] PagingQuery paging)
         {
-            var threads = await _db.ForumThreads
+            var query = _db.ForumThreads
                 .Include(t => t.CreatedByUser)
+                .AsQueryable();
+
+            var totalCount = await query.CountAsync();
+
+            var threads = await query
                 .OrderByDescending(t => t.IsPinned)
                 .ThenByDescending(t => t.LastPostAt ?? t.CreatedAt)
+                .Skip(paging.Skip)
+                .Take(paging.PageSize)
                 .Select(t => ToDto(t))
                 .ToListAsync();
 
-            return ToApiValidationSuccess(threads);
+            var response = new PagedResponse<ForumThreadDto>
+            {
+                Items = threads,
+                Page = paging.Page,
+                PageSize = paging.PageSize,
+                TotalCount = totalCount
+            };
+
+            return ToApiValidationSuccess(response);
         }
 
         // ---------------- Get single thread ----------------
