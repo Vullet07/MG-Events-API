@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Services.AuthUserService;
 using Services.Dtos;
 using Services.JwtService;
+using System.Linq;
 using WebAPI.Extensions;
 
 namespace WebAPI.Controllers
@@ -39,19 +40,30 @@ namespace WebAPI.Controllers
             if (dto == null)
                 return ToApiValidationFail("Missing login data.");
 
-            var user = await _db.Users.FirstOrDefaultAsync(u => u.Username == dto.Username);
+            var user = await _db.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Username == dto.Username);
+
             if (user == null)
                 return ToApiValidationFail("Invalid username or password.", 401);
 
-            var verifyResult = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, dto.Password);
-            if (verifyResult == PasswordVerificationResult.Failed)
+            var passwordValid = _passwordHasher.VerifyHashedPassword(
+                user,
+                user.PasswordHash,
+                dto.Password);
+
+            if (passwordValid == PasswordVerificationResult.Failed)
                 return ToApiValidationFail("Invalid username or password.", 401);
 
-            var token = _tokenService.GenerateToken(user.Id.ToString(), user.Role.ToString(), user.Username);
+            var tokenResult = _tokenService.GenerateToken(
+                user.Id.ToString(),
+                user.Role.ToString(),
+                user.Username);
 
             var response = new LoginResponseDto
             {
-                Token = token,
+                Token = tokenResult.Token,
+                ExpiresAt = tokenResult.ExpiresAt,
                 User = new UserDto
                 {
                     Id = user.Id,
@@ -85,15 +97,27 @@ namespace WebAPI.Controllers
             _db.Users.Add(user);
             await _db.SaveChangesAsync();
 
-            var userDto = new UserDto
+            // Generate token AFTER saving user
+            var tokenResult = _tokenService.GenerateToken(
+                user.Id.ToString(),
+                user.Role.ToString(),
+                user.Username);
+
+            var response = new LoginResponseDto
             {
-                Id = user.Id,
-                Username = user.Username,
-                Role = user.Role,
-                PhotoUrl = user.PhotoUrl
+                Token = tokenResult.Token,
+                ExpiresAt = tokenResult.ExpiresAt,
+                TokenType = "Bearer",
+                User = new UserDto
+                {
+                    Id = user.Id,
+                    Username = user.Username,
+                    Role = user.Role,
+                    PhotoUrl = user.PhotoUrl
+                }
             };
 
-            return ToApiValidationSuccess(userDto, "User registered successfully.");
+            return ToApiValidationSuccess(response, "User registered successfully.");
         }
 
         // ---------------- ME ----------------
