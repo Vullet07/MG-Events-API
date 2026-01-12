@@ -6,11 +6,9 @@ using System.Threading.Tasks;
 
 namespace Services.Dtos
 {
-    public class LoginResponseDto
+    public class TokenResult
     {
         public string Token { get; set; } = null!;
-        public string TokenType { get; set; } = "Bearer";
         public DateTime ExpiresAt { get; set; }
-        public UserDto User { get; set; } = null!;
     }
 }
