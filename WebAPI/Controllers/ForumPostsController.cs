@@ -86,11 +86,19 @@ namespace WebAPI.Controllers
         // ---------------- Get posts by thread ----------------
         [AllowAnonymous]
         [HttpGet("thread/{threadId:int}")]
-        public async Task<IActionResult> GetByThread(int threadId)
+        public async Task<IActionResult> GetByThread(
+    int threadId,
+    [FromQuery] PagingQuery paging)
         {
-            var posts = await _db.ForumPosts
-                .Where(p => p.Thread.Id == threadId && !p.IsDeleted)
+            var query = _db.ForumPosts
+                .Where(p => p.Thread.Id == threadId && !p.IsDeleted);
+
+            var totalCount = await query.CountAsync();
+
+            var posts = await query
                 .OrderBy(p => p.CreatedAt)
+                .Skip(paging.Skip)
+                .Take(paging.PageSize)
                 .Select(p => new ForumPostDto
                 {
                     Id = p.Id,
@@ -103,7 +111,15 @@ namespace WebAPI.Controllers
                 })
                 .ToListAsync();
 
-            return ToApiValidationSuccess(posts);
+            var response = new PagedResponse<ForumPostDto>
+            {
+                Items = posts,
+                Page = paging.Page,
+                PageSize = paging.PageSize,
+                TotalCount = totalCount
+            };
+
+            return ToApiValidationSuccess(response);
         }
 
         // ---------------- Delete post ----------------

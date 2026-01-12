@@ -30,9 +30,15 @@ namespace WebAPI.Controllers
         }
         // ---------------- GET ALL ----------------
         [HttpGet]
-        public async Task<IActionResult> GetAll()
+        public async Task<IActionResult> GetAll([FromQuery] PagingQuery paging)
         {
-            var users = await _db.Users
+            var query = _db.Users.AsQueryable();
+
+            var totalCount = await query.CountAsync();
+
+            var users = await query
+                .Skip(paging.Skip)
+                .Take(paging.PageSize)
                 .Select(u => new UserDto
                 {
                     Id = u.Id,
@@ -42,7 +48,15 @@ namespace WebAPI.Controllers
                 })
                 .ToListAsync();
 
-            return ToApiValidationSuccess(users);
+            var response = new PagedResponse<UserDto>
+            {
+                Items = users,
+                Page = paging.Page,
+                PageSize = paging.PageSize,
+                TotalCount = totalCount
+            };
+
+            return ToApiValidationSuccess(response);
         }
 
         // ---------------- GET BY ID ----------------
