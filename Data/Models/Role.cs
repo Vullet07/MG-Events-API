@@ -10,7 +10,7 @@ namespace Data.Models
     {
         Student,
         Teacher,
-        AdminStaff,
-        Employee
+        Admin,
+        SchoolStaff
     }
 }

@@ -29,6 +29,7 @@ namespace WebAPI.Controllers
             _logger = logger;
         }
         // ---------------- GET ALL ----------------
+        [Authorize(Roles = Role.Admin)]
         [HttpGet]
         public async Task<IActionResult> GetAll([FromQuery] PagingQuery paging)
         {

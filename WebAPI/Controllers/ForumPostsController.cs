@@ -50,8 +50,6 @@ namespace WebAPI.Controllers
             }
 
             var user = await _db.Users.FindAsync(_authUser.Id);
-            if (user == null)
-                return ToApiValidationFail("Authenticated user not found.", 401);
 
             var post = new ForumPost
             {
