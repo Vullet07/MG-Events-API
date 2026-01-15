@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Services.AuthUserService;
 using Services.Dtos;
 using WebAPI.Extensions;
 
@@ -18,18 +19,19 @@ namespace WebAPI.Controllers
         private readonly AppDbContext _db;
         private readonly IPasswordHasher<User> _passwordHasher;
         private readonly ILogger<UserController> _logger;
+        private readonly IAuthUserService _authUser;
 
-        public UserController(
-            AppDbContext db,
-            IPasswordHasher<User> passwordHasher,
-            ILogger<UserController> logger)
+        public UserController(AppDbContext db, IPasswordHasher<User> passwordHasher, ILogger<UserController> logger, IAuthUserService authUser)
         {
             _db = db;
             _passwordHasher = passwordHasher;
             _logger = logger;
+            _authUser = authUser;
         }
+
+
         // ---------------- GET ALL ----------------
-        [Authorize(Roles = Role.Admin)]
+        [Authorize(Roles = "Admin")]
         [HttpGet]
         public async Task<IActionResult> GetAll([FromQuery] PagingQuery paging)
         {
@@ -62,6 +64,7 @@ namespace WebAPI.Controllers
 
         // ---------------- GET BY ID ----------------
         [HttpGet("{id:int}")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> GetById(int id)
         {
             var user = await _db.Users.FindAsync(id);
@@ -86,6 +89,9 @@ namespace WebAPI.Controllers
             var user = await _db.Users.FindAsync(id);
             if (user == null)
                 return ToApiValidationFail("User not found.", 404);
+
+            if (_authUser.Role != Role.Admin && user.Id != _authUser.Id)
+                return ToApiValidationFail("Only admins can update other users' info", 400);
 
             if (!string.IsNullOrEmpty(dto.Username))
                 user.Username = dto.Username;
@@ -114,13 +120,15 @@ namespace WebAPI.Controllers
 
         // ---------------- DELETE USER ----------------
         [HttpDelete("{id:int}")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> Delete(int id)
         {
             var user = await _db.Users.FindAsync(id);
             if (user == null)
                 return ToApiValidationFail("User not found.", 404);
 
-            _db.Users.Remove(user);
+            user.IsDeleted = true;
+            user.DeletedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
 
             return ToApiValidationSuccess("User deleted successfully.");

@@ -56,7 +56,7 @@ namespace WebAPI.Controllers
                 Title = dto.Title,
                 Content = dto.Content,
                 Thread = thread,
-                User = user,
+                User = user!,
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -74,7 +74,7 @@ namespace WebAPI.Controllers
                 Content = post.Content,
                 CreatedAt = post.CreatedAt,
                 UpdatedAt = post.UpdatedAt,
-                UserId = post.User.Id,
+                UserId = post.User!.Id,
                 ThreadId = thread.Id
             };
 
@@ -82,7 +82,7 @@ namespace WebAPI.Controllers
         }
 
         // ---------------- Get posts by thread ----------------
-        [AllowAnonymous]
+
         [HttpGet("thread/{threadId:int}")]
         public async Task<IActionResult> GetByThread(
     int threadId,
@@ -121,6 +121,7 @@ namespace WebAPI.Controllers
         }
 
         // ---------------- Delete post ----------------
+
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> Delete(int id)
         {
@@ -130,6 +131,10 @@ namespace WebAPI.Controllers
 
             if (post == null)
                 return ToApiValidationFail("Post not found.", 404);
+
+            if (_authUser.Role == Role.Student && post.User.Id != _authUser.Id)
+                return ToApiValidationFail("You can't delete other users' posts", 400);
+
 
             post.IsDeleted = true;
             post.UpdatedAt = DateTime.UtcNow;

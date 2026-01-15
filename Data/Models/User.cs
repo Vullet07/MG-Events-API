@@ -21,5 +21,9 @@ namespace Data.Models
         public Role Role { get; set; }
 
         public string? PhotoUrl { get; set; }
+
+        public bool IsDeleted { get; set; }
+
+        public DateTime? DeletedAt { get; set; }
     }
 }
