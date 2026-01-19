@@ -51,7 +51,6 @@ namespace WebAPI.Controllers
         }
 
         // ---------------- Get all threads ----------------
-        [AllowAnonymous]
         [HttpGet]
         public async Task<IActionResult> GetAll([FromQuery] PagingQuery paging)
         {
@@ -103,7 +102,8 @@ namespace WebAPI.Controllers
             var thread = await _db.ForumThreads.FindAsync(id);
             if (thread == null)
                 return ToApiValidationFail("Thread not found.", 404);
-
+            if (_authUser.Role == Role.Student && thread.CreatedByUser.Id != _authUser.Id)
+                return ToApiValidationFail("You can't lock other users' threads", 400);
             thread.IsLocked = true;
             await _db.SaveChangesAsync();
 
@@ -117,6 +117,8 @@ namespace WebAPI.Controllers
             var thread = await _db.ForumThreads.FindAsync(id);
             if (thread == null)
                 return ToApiValidationFail("Thread not found.", 404);
+            if (_authUser.Role == Role.Student && thread.CreatedByUser.Id != _authUser.Id)
+                return ToApiValidationFail("You can't unlock other users' threads", 400);
 
             thread.IsLocked = false;
             await _db.SaveChangesAsync();
@@ -132,6 +134,8 @@ namespace WebAPI.Controllers
             var thread = await _db.ForumThreads.FindAsync(id);
             if (thread == null)
                 return ToApiValidationFail("Thread not found.", 404);
+            if (_authUser.Role == Role.Student && thread.CreatedByUser.Id != _authUser.Id)
+                return ToApiValidationFail("You can't pin other users' threads", 400);
 
             thread.IsPinned = true;
             await _db.SaveChangesAsync();
@@ -146,6 +150,8 @@ namespace WebAPI.Controllers
             var thread = await _db.ForumThreads.FindAsync(id);
             if (thread == null)
                 return ToApiValidationFail("Thread not found.", 404);
+            if (_authUser.Role == Role.Student && thread.CreatedByUser.Id != _authUser.Id)
+                return ToApiValidationFail("You can't unpin other users' threads", 400);
 
             thread.IsPinned = false;
             await _db.SaveChangesAsync();

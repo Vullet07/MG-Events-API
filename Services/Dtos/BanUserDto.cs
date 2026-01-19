@@ -4,13 +4,10 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Data.Models
+namespace Services.Dtos
 {
-    public enum Role
+    public class BanUserDto
     {
-        Student,
-        Teacher,
-        Admin,
-        SchoolStaff
+        public DateTime? BannedUntil { get; set; }
     }
 }

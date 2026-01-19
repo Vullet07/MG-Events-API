@@ -13,5 +13,7 @@ namespace Services.AuthUserService
         string? Username { get; }
         Role? Role { get; }
         bool IsAuthenticated { get; }
+        bool IsBanned { get; }
+        DateTime? BannedUntil { get; }
     }
 }

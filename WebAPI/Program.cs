@@ -153,6 +153,8 @@ app.UseHttpsRedirection();
 
 app.UseAuthorization();
 
+app.UseMiddleware<BanMiddleware>();
+
 app.MapControllers();
 
 app.Run();

@@ -1,4 +1,5 @@
-﻿using Data.Models;
+﻿using Data;
+using Data.Models;
 using Microsoft.AspNetCore.Http;
 using System;
 using System.Collections.Generic;
@@ -9,41 +10,63 @@ using System.Threading.Tasks;
 
 namespace Services.AuthUserService
 {
-    public class AuthUserService: IAuthUserService
+    public class AuthUserService : IAuthUserService
     {
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly AppDbContext _db;
 
-        public AuthUserService(IHttpContextAccessor httpContextAccessor)
+        private User? _cachedUser;
+
+        public AuthUserService(
+            IHttpContextAccessor httpContextAccessor,
+            AppDbContext db)
         {
             _httpContextAccessor = httpContextAccessor;
+            _db = db;
         }
+
+        private ClaimsPrincipal? Principal =>
+            _httpContextAccessor.HttpContext?.User;
 
         public bool IsAuthenticated =>
-            _httpContextAccessor.HttpContext?.User?.Identity?.IsAuthenticated ?? false;
+            Principal?.Identity?.IsAuthenticated ?? false;
 
-        public int? Id
+        private int? UserId
         {
             get
             {
-                var idClaim = _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.NameIdentifier);
-                if (idClaim == null) return null;
-
-                return int.TryParse(idClaim.Value, out var id) ? id : null;
+                var idClaim = Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                return int.TryParse(idClaim, out var id) ? id : null;
             }
         }
 
-        public string? Username =>
-            _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.Name)?.Value;
-
-        public Role? Role
+        private User? User
         {
             get
             {
-                var roleClaim = _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.Role)?.Value;
-                if (string.IsNullOrEmpty(roleClaim)) return null;
+                if (!IsAuthenticated || UserId == null)
+                    return null;
 
-                return Enum.TryParse<Role>(roleClaim, out var role) ? role : null;
+                if (_cachedUser != null)
+                    return _cachedUser;
+
+                _cachedUser = _db.Users
+                    .FirstOrDefault(u => u.Id == UserId && !u.IsDeleted);
+
+                return _cachedUser;
             }
         }
+
+        public int? Id => User?.Id;
+
+        public string? Username => User?.Username;
+
+        public Role? Role => User?.Role;
+
+        public bool IsBanned =>
+            User?.IsBanned == true &&
+            (User.BannedUntil == null || User.BannedUntil > DateTime.UtcNow);
+
+        public DateTime? BannedUntil => User?.BannedUntil;
     }
 }

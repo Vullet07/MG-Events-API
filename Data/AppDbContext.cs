@@ -23,6 +23,9 @@ namespace Data
             base.OnModelCreating(modelBuilder);
 
             modelBuilder.Entity<User>()
+                .HasQueryFilter(u => !u.IsDeleted);
+
+            modelBuilder.Entity<User>()
                 .HasIndex(u => u.Username)
                 .IsUnique();
 
