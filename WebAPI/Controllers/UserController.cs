@@ -118,6 +118,55 @@ namespace WebAPI.Controllers
             return ToApiValidationSuccess(userDto, "User updated successfully.");
         }
 
+        [Authorize(Roles = "Admin")]
+        [HttpPost("{id:int}/ban")]
+        public async Task<IActionResult> BanUser(int id, [FromBody] BanUserDto dto)
+        {
+            var user = await _db.Users.FindAsync(id);
+            if (user == null)
+                return ToApiValidationFail("User not found.", 404);
+
+            if (user.IsBanned)
+                return ToApiValidationFail("User is already banned.");
+
+            user.IsBanned = true;
+            user.BannedUntil = dto.BannedUntil;
+
+            await _db.SaveChangesAsync();
+
+            return ToApiValidationSuccess(new
+            {
+                user.Id,
+                user.Username,
+                user.IsBanned,
+                user.BannedUntil
+            }, "User banned successfully.");
+        }
+
+        [Authorize(Roles = "Admin")]
+        [HttpPost("{id:int}/unban")]
+        public async Task<IActionResult> UnbanUser(int id)
+        {
+            var user = await _db.Users.FindAsync(id);
+            if (user == null)
+                return ToApiValidationFail("User not found.", 404);
+
+            if (!user.IsBanned)
+                return ToApiValidationFail("User is not banned.");
+
+            user.IsBanned = false;
+            user.BannedUntil = null;
+
+            await _db.SaveChangesAsync();
+
+            return ToApiValidationSuccess(new
+            {
+                user.Id,
+                user.Username,
+                user.IsBanned
+            }, "User unbanned successfully.");
+        }
+
         // ---------------- DELETE USER ----------------
         [HttpDelete("{id:int}")]
         [Authorize(Roles = "Admin")]

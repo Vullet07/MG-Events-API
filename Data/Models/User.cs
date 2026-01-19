@@ -25,5 +25,9 @@ namespace Data.Models
         public bool IsDeleted { get; set; }
 
         public DateTime? DeletedAt { get; set; }
+
+        public bool IsBanned { get; set; }
+        public DateTime? BannedUntil { get; set; }
+        public string? BanReason { get; set; }
     }
 }

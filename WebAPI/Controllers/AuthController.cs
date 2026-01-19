@@ -47,6 +47,17 @@ namespace WebAPI.Controllers
             if (user == null)
                 return ToApiValidationFail("Invalid username or password.", 401);
 
+            if (user.IsBanned)
+            {
+                if (user.BannedUntil == null || user.BannedUntil > DateTime.UtcNow)
+                    return ToApiValidationFail("Account is banned", 403);
+
+                user.IsBanned = false;
+                user.BannedUntil = null;
+                user.BanReason = null;
+                await _db.SaveChangesAsync();
+            }
+
             var passwordValid = _passwordHasher.VerifyHashedPassword(
                 user,
                 user.PasswordHash,
