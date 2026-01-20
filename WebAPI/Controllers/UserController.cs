@@ -18,17 +18,14 @@ namespace WebAPI.Controllers
     {
         private readonly AppDbContext _db;
         private readonly IPasswordHasher<User> _passwordHasher;
-        private readonly ILogger<UserController> _logger;
         private readonly IAuthUserService _authUser;
 
-        public UserController(AppDbContext db, IPasswordHasher<User> passwordHasher, ILogger<UserController> logger, IAuthUserService authUser)
+        public UserController(AppDbContext db, IPasswordHasher<User> passwordHasher, IAuthUserService authUser)
         {
             _db = db;
             _passwordHasher = passwordHasher;
-            _logger = logger;
             _authUser = authUser;
         }
-
 
         // ---------------- GET ALL ----------------
         [Authorize(Roles = "Admin")]
@@ -118,7 +115,7 @@ namespace WebAPI.Controllers
             return ToApiValidationSuccess(userDto, "User updated successfully.");
         }
 
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Teacher")]
         [HttpPost("{id:int}/ban")]
         public async Task<IActionResult> BanUser(int id, [FromBody] BanUserDto dto)
         {
@@ -143,7 +140,7 @@ namespace WebAPI.Controllers
             }, "User banned successfully.");
         }
 
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Teacher")]
         [HttpPost("{id:int}/unban")]
         public async Task<IActionResult> UnbanUser(int id)
         {
