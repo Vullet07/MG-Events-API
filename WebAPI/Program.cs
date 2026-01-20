@@ -5,6 +5,8 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Serilog;
+using Serilog.Context;
 using Services.AuthUserService;
 using Services.JwtService;
 using System.Text;
@@ -25,6 +27,15 @@ builder.Services.AddSwaggerGen(options =>
 {
     options.UseInlineDefinitionsForEnums();
 });
+
+// SERILOG
+
+Log.Logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(builder.Configuration)
+    .Enrich.FromLogContext()
+    .CreateLogger();
+
+builder.Host.UseSerilog();
 
 // CORS
 
@@ -138,6 +149,25 @@ if (app.Environment.IsDevelopment())
 app.UseCors("AllowFrontend");
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+// Enrich logs with authenticated user info
+app.Use(async (context, next) =>
+{
+    var authUser = context.RequestServices.GetService<IAuthUserService>();
+    using (LogContext.PushProperty("UserId", authUser?.Id))
+    using (LogContext.PushProperty("Username", authUser?.Username))
+    using (LogContext.PushProperty("UserRole", authUser?.Role?.ToString()))
+    {
+        await next();
+    }
+});
+
+// HTTP request logging
+app.UseSerilogRequestLogging(options =>
+{
+    options.MessageTemplate =
+        "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+});
 
 app.UseAuthentication();
 
