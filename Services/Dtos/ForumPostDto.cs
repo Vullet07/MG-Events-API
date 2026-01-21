@@ -10,6 +10,7 @@ namespace Services.Dtos
     {
         public int Id { get; set; }
         public string? Title { get; set; }
+        public string? PhotoUrl { get; set; }
         public string Content { get; set; } = default!;
         public DateTime CreatedAt { get; set; }
         public DateTime? UpdatedAt { get; set; }
