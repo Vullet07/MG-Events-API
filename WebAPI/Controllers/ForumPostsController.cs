@@ -54,6 +54,7 @@ namespace WebAPI.Controllers
             var post = new ForumPost
             {
                 Title = dto.Title,
+                PhotoUrl = dto.PhotoUrl,
                 Content = dto.Content,
                 Thread = thread,
                 User = user!,
@@ -71,6 +72,7 @@ namespace WebAPI.Controllers
             {
                 Id = post.Id,
                 Title = post.Title,
+                PhotoUrl = post.PhotoUrl,
                 Content = post.Content,
                 CreatedAt = post.CreatedAt,
                 UpdatedAt = post.UpdatedAt,
