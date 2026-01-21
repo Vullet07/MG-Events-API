@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Services.Validators;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
@@ -9,10 +10,8 @@ namespace Services.Dtos
 {
     public class ResetPasswordDto
     {
-        [Required]
-        public string Token { get; set; } = null!;
-
-        [Required, MinLength(8)]
-        public string NewPassword { get; set; } = null!;
+        public required string Token { get; set; } = null!;
+        [PasswordPolicy]
+        public required string NewPassword { get; set; } = null!;
     }
 }

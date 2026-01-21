@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Services.Validators;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
@@ -14,6 +15,7 @@ namespace Services.Dtos
         public required string Username { get; set; }
         [EmailAddress]
         public required string Email { get; set; }
+        [PasswordPolicy]
         public required string Password { get; set; }
     }
 }
