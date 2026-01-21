@@ -58,6 +58,7 @@ namespace Services.AuthUserService
         }
 
         public int? Id => User?.Id;
+        public string? Email => User?.Email;
 
         public string? Username => User?.Username;
 

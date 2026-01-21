@@ -90,6 +90,14 @@ namespace WebAPI.Controllers
             if (_authUser.Role != Role.Admin && user.Id != _authUser.Id)
                 return ToApiValidationFail("Only admins can update other users' info", 400);
 
+            if (!string.IsNullOrEmpty(dto.Email))
+            {
+                if (await _db.Users.AnyAsync(u => u.Email == dto.Email && u.Id != id))
+                    return ToApiValidationFail("Email is already used by another user.", 400);
+
+                user.Email = dto.Email;
+            }
+
             if (!string.IsNullOrEmpty(dto.Username))
                 user.Username = dto.Username;
 
@@ -108,6 +116,7 @@ namespace WebAPI.Controllers
             {
                 Id = user.Id,
                 Username = user.Username,
+                Email = user.Email,
                 Role = user.Role,
                 PhotoUrl = user.PhotoUrl
             };

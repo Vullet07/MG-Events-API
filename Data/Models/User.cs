@@ -14,6 +14,10 @@ namespace Data.Models
 
         [MaxLength(200)]
         public required string Username { get; set; }
+
+        [EmailAddress]
+        public required string Email { get; set; }
+
         [Required]
         public string? PasswordHash { get; set; }
 

@@ -8,6 +8,8 @@ using Microsoft.EntityFrameworkCore;
 using Services.AuthUserService;
 using Services.Dtos;
 using Services.JwtService;
+using Services.PasswordResetService;
+using Services.PasswordResetService.EmailService;
 using System.Linq;
 using WebAPI.Extensions;
 
@@ -16,56 +18,64 @@ namespace WebAPI.Controllers
     [Route("api/[controller]")]
     public class AuthController : ApiControllerBase
     {
+        private readonly string _backendBaseUrl;
         private readonly ITokenService _tokenService;
         private readonly IPasswordHasher<User> _passwordHasher;
         private readonly IAuthUserService _authUserService;
+        private readonly IEmailService _emailService;
         private readonly AppDbContext _db;
 
-        public AuthController(
-            ITokenService tokenService,
-            IPasswordHasher<User> passwordHasher,
-            IAuthUserService authUserService,
-            AppDbContext db)
+        public AuthController(IConfiguration configuration, ITokenService tokenService, IPasswordHasher<User> passwordHasher, IAuthUserService authUserService, IEmailService emailService, AppDbContext db)
         {
+            _backendBaseUrl = configuration["Frontend:BaseUrl"]!;
             _tokenService = tokenService;
             _passwordHasher = passwordHasher;
             _authUserService = authUserService;
+            _emailService = emailService;
             _db = db;
         }
+
+
 
         // ---------------- LOGIN ----------------
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDto dto)
         {
-            if (dto == null)
-                return ToApiValidationFail("Missing login data.");
+            if (dto == null || string.IsNullOrWhiteSpace(dto.Username))
+                return ToApiValidationFail("Missing login data");
 
+            // Find user by username or email
             var user = await _db.Users
                 .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Username == dto.Username);
+                .FirstOrDefaultAsync(u =>
+                    u.Username == dto.Username || u.Email == dto.Username);
 
             if (user == null)
-                return ToApiValidationFail("Invalid username or password.", 401);
+                return ToApiValidationFail("Invalid credentials", 401);
 
+            // Check if user is banned
             if (user.IsBanned)
             {
                 if (user.BannedUntil == null || user.BannedUntil > DateTime.UtcNow)
                     return ToApiValidationFail("Account is banned", 403);
 
+                // Lift ban if expired
                 user.IsBanned = false;
                 user.BannedUntil = null;
                 user.BanReason = null;
                 await _db.SaveChangesAsync();
             }
 
+            // Verify password
             var passwordValid = _passwordHasher.VerifyHashedPassword(
                 user,
                 user.PasswordHash,
                 dto.Password);
 
             if (passwordValid == PasswordVerificationResult.Failed)
-                return ToApiValidationFail("Invalid username or password.", 401);
+                return ToApiValidationFail("Invalid credentials", 401);
 
+            // Generate JWT
             var tokenResult = _tokenService.GenerateToken(
                 user.Id.ToString(),
                 user.Role.ToString(),
@@ -79,13 +89,15 @@ namespace WebAPI.Controllers
                 {
                     Id = user.Id,
                     Username = user.Username,
+                    Email = user.Email,      // include email in response
                     Role = user.Role,
                     PhotoUrl = user.PhotoUrl
                 }
             };
 
-            return ToApiValidationSuccess(response, "Login successful.");
+            return ToApiValidationSuccess(response, "Login successful");
         }
+
 
         // ---------------- REGISTER ----------------
         [HttpPost("register")]
@@ -97,9 +109,13 @@ namespace WebAPI.Controllers
             if (await _db.Users.AnyAsync(u => u.Username == dto.Username))
                 return ToApiValidationFail("Username already exists.", 409);
 
+            if (await _db.Users.AnyAsync(u => u.Email == dto.Email))
+                return ToApiValidationFail("Email already registered.");
+
             var user = new User
             {
                 Username = dto.Username,
+                Email = dto.Email,
                 Role = Role.Student,
                 PhotoUrl = dto.PhotoUrl
             };
@@ -108,7 +124,6 @@ namespace WebAPI.Controllers
             _db.Users.Add(user);
             await _db.SaveChangesAsync();
 
-            // Generate token AFTER saving user
             var tokenResult = _tokenService.GenerateToken(
                 user.Id.ToString(),
                 user.Role.ToString(),
@@ -123,12 +138,79 @@ namespace WebAPI.Controllers
                 {
                     Id = user.Id,
                     Username = user.Username,
+                    Email = user.Email,
                     Role = user.Role,
                     PhotoUrl = user.PhotoUrl
                 }
             };
 
             return ToApiValidationSuccess(response, "User registered successfully.");
+        }
+
+        [HttpPost("forgot-password")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ForgotPassword(ForgotPasswordDto dto)
+        {
+            var user = await _db.Users
+                .FirstOrDefaultAsync(u =>
+                    u.Email == dto.Email &&
+                    !u.IsDeleted &&
+                    !u.IsBanned);
+
+            // Prevent user enumeration
+            if (user == null)
+                return ToApiValidationSuccess("If the email exists, a reset link was sent.");
+
+            var token = PasswordResetTokenHelper.GenerateToken();
+
+            var resetToken = new PasswordResetToken
+            {
+                User = user,
+                TokenHash = PasswordResetTokenHelper.HashToken(token),
+                ExpiresAt = DateTime.UtcNow.AddMinutes(30)
+            };
+
+            _db.PasswordResetTokens.Add(resetToken);
+            await _db.SaveChangesAsync();
+
+            var resetUrl =
+                $"{_backendBaseUrl}/reset-password?token={Uri.EscapeDataString(token)}";
+
+            await _emailService.SendAsync(
+                user.Email,
+                "Reset your password",
+                $"Click <a href='{resetUrl}'>here</a> to reset your password."
+            );
+
+            return ToApiValidationSuccess("If the email exists, a reset link was sent.");
+        }
+
+        [HttpPost("reset-password")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ResetPassword(ResetPasswordDto dto)
+        {
+            var tokenHash = dto.Token;
+
+            var resetToken = await _db.PasswordResetTokens
+                .Include(x => x.User)
+                .FirstOrDefaultAsync(x =>
+                    x.TokenHash == tokenHash &&
+                    !x.IsUsed &&
+                    x.ExpiresAt > DateTime.UtcNow &&
+                    !x.User.IsDeleted &&
+                    !x.User.IsBanned);
+
+            if (resetToken == null)
+                return ToApiValidationFail("Invalid or expired reset token.", 400);
+
+            resetToken.User.PasswordHash =
+                _passwordHasher.HashPassword(resetToken.User, dto.NewPassword);
+
+            resetToken.IsUsed = true;
+
+            await _db.SaveChangesAsync();
+
+            return ToApiValidationSuccess("Password reset successfully.");
         }
 
         // ---------------- ME ----------------
@@ -142,6 +224,7 @@ namespace WebAPI.Controllers
             var userDto = new UserDto
             {
                 Id = _authUserService.Id.Value,
+                Email = _authUserService.Email!,
                 Username = _authUserService.Username!,
                 Role = _authUserService.Role ?? Role.Student,
                 PhotoUrl = null

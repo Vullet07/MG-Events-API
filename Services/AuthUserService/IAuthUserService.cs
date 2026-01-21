@@ -10,6 +10,7 @@ namespace Services.AuthUserService
     public interface IAuthUserService
     {
         int? Id { get; }
+        string? Email { get; }
         string? Username { get; }
         Role? Role { get; }
         bool IsAuthenticated { get; }
