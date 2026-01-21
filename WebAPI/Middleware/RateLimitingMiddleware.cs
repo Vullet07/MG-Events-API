@@ -6,57 +6,44 @@ namespace WebAPI.Middleware
     public class RateLimitingMiddleware
     {
         private readonly RequestDelegate _next;
-        private readonly IMemoryCache _cache;
+        private static readonly MemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
+        private const int DefaultLimit = 100; // default limit per minute
 
-        private const int LIMIT = 100;
-        private static readonly TimeSpan WINDOW = TimeSpan.FromMinutes(1);
-
-        public RateLimitingMiddleware(RequestDelegate next, IMemoryCache cache)
+        public RateLimitingMiddleware(RequestDelegate next)
         {
             _next = next;
-            _cache = cache;
         }
 
         public async Task InvokeAsync(HttpContext context)
         {
-            var key = GetClientKey(context);
+            var path = context.Request.Path.ToString().ToLower();
+            var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-            if (key == null)
+            // Set limit based on endpoint
+            int limit = path.Contains("/forgot-password") ? 3 : DefaultLimit;
+            var key = $"{ip}:{path}";
+
+            if (!_cache.TryGetValue(key, out int count))
             {
-                await _next(context);
-                return;
+                _cache.Set(key, 1, DateTimeOffset.UtcNow.AddMinutes(1));
             }
-
-            var counter = _cache.GetOrCreate(key, entry =>
+            else
             {
-                entry.AbsoluteExpirationRelativeToNow = WINDOW;
-                return 0;
-            });
-
-            if (counter >= LIMIT)
-            {
-                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-                await context.Response.WriteAsJsonAsync(new
+                if (count >= limit)
                 {
-                    success = false,
-                    message = "Too many requests. Please try again later."
-                });
-                return;
-            }
+                    context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        Success = false,
+                        Message = "Too many requests. Try again later."
+                    });
+                    return;
+                }
 
-            _cache.Set(key, counter + 1, WINDOW);
+                _cache.Set(key, count + 1, DateTimeOffset.UtcNow.AddMinutes(1));
+            }
 
             await _next(context);
-        }
-
-        private static string? GetClientKey(HttpContext context)
-        {
-            if (context.User.Identity?.IsAuthenticated == true)
-            {
-                return context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            }
-
-            return context.Connection.RemoteIpAddress?.ToString();
         }
     }
 }
