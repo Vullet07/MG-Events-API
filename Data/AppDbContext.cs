@@ -18,6 +18,8 @@ namespace Data
         
         public DbSet<ForumThread> ForumThreads { get; set; }
 
+        public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -74,6 +76,9 @@ namespace Data
                       .HasForeignKey("ParentPostId")
                       .OnDelete(DeleteBehavior.Restrict);
             });
+            modelBuilder.Entity<PasswordResetToken>()
+                .HasIndex(x => x.TokenHash)
+                .IsUnique();
         }
     }
 }

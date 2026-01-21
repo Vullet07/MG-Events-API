@@ -9,6 +9,8 @@ using Serilog;
 using Serilog.Context;
 using Services.AuthUserService;
 using Services.JwtService;
+using Services.PasswordResetService;
+using Services.PasswordResetService.EmailService;
 using System.Text;
 using System.Text.Json.Serialization;
 using WebAPI.Controllers;
@@ -111,6 +113,13 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
 });
+
+// Email service
+
+builder.Services.Configure<SmtpSettings>(
+    builder.Configuration.GetSection("Smtp"));
+
+builder.Services.AddScoped<IEmailService, EmailService>();
 
 // Serialization
 

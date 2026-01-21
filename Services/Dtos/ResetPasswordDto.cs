@@ -7,11 +7,12 @@ using System.Threading.Tasks;
 
 namespace Services.Dtos
 {
-    public class LoginDto
+    public class ResetPasswordDto
     {
-        public string Username { get; set; }
-        [EmailAddress]
-        public string Email { get; set; }
-        public string Password { get; set; }
+        [Required]
+        public string Token { get; set; } = null!;
+
+        [Required, MinLength(8)]
+        public string NewPassword { get; set; } = null!;
     }
 }
