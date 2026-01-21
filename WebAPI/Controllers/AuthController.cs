@@ -27,7 +27,7 @@ namespace WebAPI.Controllers
 
         public AuthController(IConfiguration configuration, ITokenService tokenService, IPasswordHasher<User> passwordHasher, IAuthUserService authUserService, IEmailService emailService, AppDbContext db)
         {
-            _backendBaseUrl = configuration["Frontend:BaseUrl"]!;
+            _backendBaseUrl = configuration["Backend:BaseUrl"]!;
             _tokenService = tokenService;
             _passwordHasher = passwordHasher;
             _authUserService = authUserService;
@@ -41,7 +41,7 @@ namespace WebAPI.Controllers
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDto dto)
         {
-            if (dto == null || string.IsNullOrWhiteSpace(dto.Username))
+            if (dto == null || string.IsNullOrWhiteSpace(dto.Username) || string.IsNullOrWhiteSpace(dto.Email) || string.IsNullOrWhiteSpace(dto.Password))
                 return ToApiValidationFail("Missing login data");
 
             // Find user by username or email
