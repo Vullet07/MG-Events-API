@@ -43,6 +43,7 @@ namespace WebAPI.Controllers
                 {
                     Id = u.Id,
                     Username = u.Username,
+                    Email = u.Email,
                     Role = u.Role,
                     PhotoUrl = u.PhotoUrl
                 })
@@ -72,6 +73,7 @@ namespace WebAPI.Controllers
             {
                 Id = user.Id,
                 Username = user.Username,
+                Email = user.Email,
                 Role = user.Role,
                 PhotoUrl = user.PhotoUrl
             };

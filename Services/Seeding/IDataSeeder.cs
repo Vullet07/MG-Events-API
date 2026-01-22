@@ -4,12 +4,10 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Data.Models
+namespace Services.Seeding
 {
-    public enum Role
+    public interface IDataSeeder
     {
-        Student,
-        Teacher,
-        Admin
+        Task SeedAsync();
     }
 }

@@ -11,6 +11,7 @@ using Services.AuthUserService;
 using Services.JwtService;
 using Services.PasswordResetService;
 using Services.PasswordResetService.EmailService;
+using Services.Seeding;
 using System.Text;
 using System.Text.Json.Serialization;
 using WebAPI.Controllers;
@@ -137,6 +138,7 @@ builder.Services.AddControllers()
 builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<IAuthUserService, AuthUserService>();
+builder.Services.AddScoped<IDataSeeder, DataSeeder>();
 
 // Other services
 
@@ -153,6 +155,10 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
     app.MapOpenApi();
+    using var scope = app.Services.CreateScope();
+    var seeder = scope.ServiceProvider.GetRequiredService<IDataSeeder>();
+    await seeder.SeedAsync();
+
 }
 
 app.UseCors("AllowFrontend");
