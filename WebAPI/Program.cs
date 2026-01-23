@@ -37,7 +37,6 @@ Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
     .CreateLogger();
-
 builder.Host.UseSerilog();
 
 // CORS
@@ -48,7 +47,7 @@ builder.Services.AddCors(options =>
     {
         policy
             .WithOrigins(
-                "http://localhost:3000"
+                "http://localhost:5173"
             )
             .AllowAnyHeader()
             .AllowAnyMethod();
