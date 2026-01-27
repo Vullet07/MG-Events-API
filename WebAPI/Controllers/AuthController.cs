@@ -41,14 +41,13 @@ namespace WebAPI.Controllers
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDto dto)
         {
-            if (dto == null || string.IsNullOrWhiteSpace(dto.Username) || string.IsNullOrWhiteSpace(dto.Email) || string.IsNullOrWhiteSpace(dto.Password))
+            if (dto == null || string.IsNullOrWhiteSpace(dto.Identifier) || string.IsNullOrWhiteSpace(dto.Password))
                 return ToApiValidationFail("Missing login data");
 
-            // Find user by username or email
+            // Find user by username OR email
             var user = await _db.Users
                 .AsNoTracking()
-                .FirstOrDefaultAsync(u =>
-                    u.Username == dto.Username || u.Email == dto.Username);
+                .FirstOrDefaultAsync(u => u.Username == dto.Identifier || u.Email == dto.Identifier);
 
             if (user == null)
                 return ToApiValidationFail("Invalid credentials", 401);
@@ -67,19 +66,12 @@ namespace WebAPI.Controllers
             }
 
             // Verify password
-            var passwordValid = _passwordHasher.VerifyHashedPassword(
-                user,
-                user.PasswordHash,
-                dto.Password);
-
+            var passwordValid = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, dto.Password);
             if (passwordValid == PasswordVerificationResult.Failed)
                 return ToApiValidationFail("Invalid credentials", 401);
 
             // Generate JWT
-            var tokenResult = _tokenService.GenerateToken(
-                user.Id.ToString(),
-                user.Role.ToString(),
-                user.Username);
+            var tokenResult = _tokenService.GenerateToken(user.Id.ToString(), user.Role.ToString(), user.Username);
 
             var response = new LoginResponseDto
             {
@@ -89,7 +81,7 @@ namespace WebAPI.Controllers
                 {
                     Id = user.Id,
                     Username = user.Username,
-                    Email = user.Email,      // include email in response
+                    Email = user.Email,
                     Role = user.Role,
                     PhotoUrl = user.PhotoUrl
                 }

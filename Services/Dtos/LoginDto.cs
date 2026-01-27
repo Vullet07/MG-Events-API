@@ -10,12 +10,7 @@ namespace Services.Dtos
 {
     public class LoginDto
     {
-        [MaxLength(100)]
-        [MinLength(4)]
-        public required string Username { get; set; }
-        [EmailAddress]
-        public required string Email { get; set; }
-        [PasswordPolicy]
+        public required string Identifier { get; set; }
         public required string Password { get; set; }
     }
 }
