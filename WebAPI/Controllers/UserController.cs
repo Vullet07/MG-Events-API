@@ -62,8 +62,29 @@ namespace WebAPI.Controllers
 
         // ---------------- GET BY ID ----------------
         [HttpGet("{id:int}")]
-        [Authorize(Roles = "Admin")]
+        [Authorize]
         public async Task<IActionResult> GetById(int id)
+        {
+            var user = await _db.Users.FindAsync(id);
+            if (user == null)
+                return ToApiValidationFail("User not found.", 404);
+
+            var userDto = new UserDto
+            {
+                Id = user.Id,
+                Username = user.Username,
+                Email = user.Email,
+                Role = user.Role,
+                PhotoUrl = user.PhotoUrl
+            };
+
+            return ToApiValidationSuccess(userDto);
+        }
+
+        // ---------------- GET PUBLIC BY ID ----------------
+        [HttpGet("public/{id:int}")]
+        [Authorize]
+        public async Task<IActionResult> GetPublicById(int id)
         {
             var user = await _db.Users.FindAsync(id);
             if (user == null)
