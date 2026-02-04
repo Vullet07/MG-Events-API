@@ -16,5 +16,6 @@ namespace Services.Dtos
         public DateTime? UpdatedAt { get; set; }
         public int UserId { get; set; }
         public int ThreadId { get; set; }
+        public int? ParentPostId { get; set; }
     }
 }

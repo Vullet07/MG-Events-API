@@ -19,12 +19,14 @@ namespace WebAPI.Controllers
         private readonly AppDbContext _db;
         private readonly IPasswordHasher<User> _passwordHasher;
         private readonly IAuthUserService _authUser;
+        private readonly IWebHostEnvironment _env;
 
-        public UserController(AppDbContext db, IPasswordHasher<User> passwordHasher, IAuthUserService authUser)
+        public UserController(AppDbContext db, IPasswordHasher<User> passwordHasher, IAuthUserService authUser, IWebHostEnvironment env)
         {
             _db = db;
             _passwordHasher = passwordHasher;
             _authUser = authUser;
+            _env = env;
         }
 
         // ---------------- GET ALL ----------------
@@ -145,6 +147,51 @@ namespace WebAPI.Controllers
             };
 
             return ToApiValidationSuccess(userDto, "User updated successfully.");
+        }
+
+        // ---------------- UPLOAD PROFILE PHOTO ----------------
+        [HttpPost("profile-photo")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> UploadProfilePhoto(IFormFile file)
+        {
+            if (file == null || file.Length == 0)
+                return ToApiValidationFail("No file uploaded.");
+
+            var userId = _authUser.Id;
+            if (userId == null)
+                return ToApiValidationFail("User not authenticated.", 401);
+
+            var user = await _db.Users.FindAsync(userId);
+            if (user == null)
+                return ToApiValidationFail("User not found.", 404);
+
+            var webRoot = _env.WebRootPath ?? Path.Combine(_env.ContentRootPath, "wwwroot");
+            var relativePath = Path.Combine("uploads", "users", userId.Value.ToString());
+            var savePath = Path.Combine(webRoot, relativePath);
+            Directory.CreateDirectory(savePath);
+
+            var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
+            var fullPath = Path.Combine(savePath, fileName);
+
+            await using (var stream = System.IO.File.Create(fullPath))
+            {
+                await file.CopyToAsync(stream);
+            }
+
+            var baseUrl = $"{Request.Scheme}://{Request.Host}";
+            user.PhotoUrl = $"{baseUrl}/{relativePath.Replace("\\\\", "/")}/{fileName}";
+            await _db.SaveChangesAsync();
+
+            var userDto = new UserDto
+            {
+                Id = user.Id,
+                Username = user.Username,
+                Email = user.Email,
+                Role = user.Role,
+                PhotoUrl = user.PhotoUrl
+            };
+
+            return ToApiValidationSuccess(userDto, "Profile photo updated.");
         }
 
         [Authorize(Roles = "Admin,Teacher")]

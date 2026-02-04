@@ -1,16 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 
-namespace Services.Dtos
+namespace WebAPI.Models
 {
-    public class CreateForumPostDto
+    public class CreateForumPostForm
     {
         public string? Title { get; set; }
         public string Content { get; set; } = default!;
         public int ThreadId { get; set; }
         public int? ParentPostId { get; set; }
+        public IFormFile? Photo { get; set; }
     }
 }

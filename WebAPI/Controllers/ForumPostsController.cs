@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Services.AuthUserService;
 using Services.Dtos;
 using WebAPI.Extensions;
+using WebAPI.Models;
 
 namespace WebAPI.Controllers
 {
@@ -17,16 +18,19 @@ namespace WebAPI.Controllers
     {
         private readonly AppDbContext _db;
         private readonly IAuthUserService _authUser;
+        private readonly IWebHostEnvironment _env;
 
-        public ForumPostsController(AppDbContext db, IAuthUserService authUser)
+        public ForumPostsController(AppDbContext db, IAuthUserService authUser, IWebHostEnvironment env)
         {
             _db = db;
             _authUser = authUser;
+            _env = env;
         }
 
         // ---------------- Create post / reply ----------------
         [HttpPost]
-        public async Task<IActionResult> Create([FromBody] CreateForumPostDto dto)
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> Create([FromForm] CreateForumPostForm dto)
         {
             if (!ModelState.IsValid)
                 return ToApiValidationFail("Invalid post data.");
@@ -54,7 +58,7 @@ namespace WebAPI.Controllers
             var post = new ForumPost
             {
                 Title = dto.Title,
-                PhotoUrl = dto.PhotoUrl,
+                PhotoUrl = await SavePhotoAsync(dto.Photo),
                 Content = dto.Content,
                 Thread = thread,
                 User = user!,
@@ -77,7 +81,8 @@ namespace WebAPI.Controllers
                 CreatedAt = post.CreatedAt,
                 UpdatedAt = post.UpdatedAt,
                 UserId = post.User!.Id,
-                ThreadId = thread.Id
+                ThreadId = thread.Id,
+                ParentPostId = dto.ParentPostId
             };
 
             return ToApiValidationSuccess(postDto, "Post created successfully.");
@@ -107,7 +112,8 @@ namespace WebAPI.Controllers
                     CreatedAt = p.CreatedAt,
                     UpdatedAt = p.UpdatedAt,
                     UserId = p.User.Id,
-                    ThreadId = p.Thread.Id
+                    ThreadId = p.Thread.Id,
+                    ParentPostId = p.ParentPostId
                 })
                 .ToListAsync();
 
@@ -144,6 +150,29 @@ namespace WebAPI.Controllers
             await _db.SaveChangesAsync();
 
             return ToApiValidationSuccess("Post deleted successfully.");
+        }
+
+        private async Task<string?> SavePhotoAsync(IFormFile? file)
+        {
+            if (file == null || file.Length == 0)
+                return null;
+
+            var userId = _authUser.Id?.ToString() ?? "unknown";
+            var webRoot = _env.WebRootPath ?? Path.Combine(_env.ContentRootPath, "wwwroot");
+            var relativePath = Path.Combine("uploads", "posts", userId);
+            var savePath = Path.Combine(webRoot, relativePath);
+            Directory.CreateDirectory(savePath);
+
+            var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
+            var fullPath = Path.Combine(savePath, fileName);
+
+            await using (var stream = System.IO.File.Create(fullPath))
+            {
+                await file.CopyToAsync(stream);
+            }
+
+            var baseUrl = $"{Request.Scheme}://{Request.Host}";
+            return $"{baseUrl}/{relativePath.Replace("\\\\", "/")}/{fileName}";
         }
     }
 }

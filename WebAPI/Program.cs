@@ -19,6 +19,11 @@ using WebAPI.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
+if (string.IsNullOrWhiteSpace(builder.Environment.WebRootPath))
+{
+    builder.Environment.WebRootPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot");
+}
+
 // SERVICES
 
 builder.Services.AddControllers();
@@ -160,6 +165,8 @@ if (app.Environment.IsDevelopment())
 
 }
 
+Directory.CreateDirectory(Path.Combine(app.Environment.WebRootPath!, "uploads"));
+
 app.UseCors("AllowFrontend");
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
@@ -194,6 +201,8 @@ if (app.Environment.IsDevelopment())
 };
 
 app.UseHttpsRedirection();
+
+app.UseStaticFiles();
 
 app.UseAuthorization();
 

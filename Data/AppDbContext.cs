@@ -72,8 +72,8 @@ namespace Data
                       .OnDelete(DeleteBehavior.Cascade);
 
                 entity.HasMany(p => p.Replies)
-                      .WithOne()
-                      .HasForeignKey("ParentPostId")
+                      .WithOne(p => p.ParentPost)
+                      .HasForeignKey(p => p.ParentPostId)
                       .OnDelete(DeleteBehavior.Restrict);
             });
             modelBuilder.Entity<PasswordResetToken>()

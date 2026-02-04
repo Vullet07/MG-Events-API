@@ -15,5 +15,7 @@ namespace Services.Dtos
         public DateTime CreatedAt { get; set; }
         public DateTime? LastPostAt { get; set; }
         public int CreatedByUserId { get; set; }
+        public string CreatedByUsername { get; set; } = default!;
+        public string CreatedByRole { get; set; } = default!;
     }
 }

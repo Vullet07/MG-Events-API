@@ -28,6 +28,10 @@ namespace Data.Models
 
         public required ForumThread Thread { get; set; }
 
+        public int? ParentPostId { get; set; }
+
+        public ForumPost? ParentPost { get; set; }
+
         public ICollection<ForumPost> Replies { get; set; } = new List<ForumPost>();
     }
 }

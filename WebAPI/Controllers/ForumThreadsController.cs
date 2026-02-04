@@ -170,7 +170,9 @@ namespace WebAPI.Controllers
                 IsPinned = thread.IsPinned,
                 CreatedAt = thread.CreatedAt,
                 LastPostAt = thread.LastPostAt,
-                CreatedByUserId = thread.CreatedByUser.Id
+                CreatedByUserId = thread.CreatedByUser.Id,
+                CreatedByUsername = thread.CreatedByUser.Username,
+                CreatedByRole = thread.CreatedByUser.Role.ToString()
             };
         }
     }
