@@ -108,6 +108,7 @@ namespace WebAPI.Controllers
                 {
                     Id = p.Id,
                     Title = p.Title,
+                    PhotoUrl = p.PhotoUrl,
                     Content = p.Content,
                     CreatedAt = p.CreatedAt,
                     UpdatedAt = p.UpdatedAt,

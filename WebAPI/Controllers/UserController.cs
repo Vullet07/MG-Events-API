@@ -202,6 +202,12 @@ namespace WebAPI.Controllers
             if (user == null)
                 return ToApiValidationFail("User not found.", 404);
 
+            if (user.Role == Role.Admin)
+                return ToApiValidationFail("You can't ban admins.", 403);
+
+            if (_authUser.Id == user.Id)
+                return ToApiValidationFail("You can't ban yourself.", 403);
+
             if (user.IsBanned)
                 return ToApiValidationFail("User is already banned.");
 
@@ -226,6 +232,12 @@ namespace WebAPI.Controllers
             var user = await _db.Users.FindAsync(id);
             if (user == null)
                 return ToApiValidationFail("User not found.", 404);
+
+            if (user.Role == Role.Admin)
+                return ToApiValidationFail("You can't unban admins.", 403);
+
+            if (_authUser.Id == user.Id)
+                return ToApiValidationFail("You can't unban yourself.", 403);
 
             if (!user.IsBanned)
                 return ToApiValidationFail("User is not banned.");

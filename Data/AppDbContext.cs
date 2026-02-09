@@ -18,6 +18,8 @@ namespace Data
         
         public DbSet<ForumThread> ForumThreads { get; set; }
 
+        public DbSet<EventPin> EventPins { get; set; }
+
         public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -74,6 +76,17 @@ namespace Data
                 entity.HasMany(p => p.Replies)
                       .WithOne(p => p.ParentPost)
                       .HasForeignKey(p => p.ParentPostId)
+                      .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<EventPin>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Title).IsRequired();
+
+                entity.HasOne(e => e.CreatedByUser)
+                      .WithMany()
+                      .HasForeignKey("CreatedByUserId")
                       .OnDelete(DeleteBehavior.Restrict);
             });
             modelBuilder.Entity<PasswordResetToken>()

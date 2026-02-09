@@ -181,7 +181,7 @@ namespace WebAPI.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> ResetPassword(ResetPasswordDto dto)
         {
-            var tokenHash = dto.Token;
+            var tokenHash = PasswordResetTokenHelper.HashToken(dto.Token);
 
             var resetToken = await _db.PasswordResetTokens
                 .Include(x => x.User)
@@ -213,13 +213,17 @@ namespace WebAPI.Controllers
             if (!_authUserService.IsAuthenticated || _authUserService.Id == null)
                 return ToApiValidationFail("User is not authenticated.", 401);
 
+            var user = _db.Users.Find(_authUserService.Id.Value);
+            if (user == null)
+                return ToApiValidationFail("User not found.", 404);
+
             var userDto = new UserDto
             {
-                Id = _authUserService.Id.Value,
-                Email = _authUserService.Email!,
-                Username = _authUserService.Username!,
-                Role = _authUserService.Role ?? Role.Student,
-                PhotoUrl = null
+                Id = user.Id,
+                Email = user.Email,
+                Username = user.Username,
+                Role = user.Role,
+                PhotoUrl = user.PhotoUrl
             };
 
             return ToApiValidationSuccess(userDto);
