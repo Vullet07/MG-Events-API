@@ -16,5 +16,8 @@ namespace Services.Dtos
         public string Email { get; set; }
         public Role Role { get; set; }
         public string? PhotoUrl { get; set; }
+        public int ThreadsCount { get; set; }
+        public int PostsCount { get; set; }
+        public int PinsCount { get; set; }
     }
 }

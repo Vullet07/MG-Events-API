@@ -17,5 +17,9 @@ namespace Services.Dtos
         public int UserId { get; set; }
         public int ThreadId { get; set; }
         public int? ParentPostId { get; set; }
+        public int Upvotes { get; set; }
+        public int Downvotes { get; set; }
+        public int Score { get; set; }
+        public int MyVote { get; set; }
     }
 }

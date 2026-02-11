@@ -28,24 +28,43 @@ namespace WebAPI.Controllers
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
+            var currentUserId = _authUser.Id;
             var pins = await _db.EventPins
                 .Include(p => p.CreatedByUser)
-                .OrderByDescending(p => p.CreatedAt)
-                .Select(p => new EventPinDto
+                .Select(p => new
                 {
-                    Id = p.Id,
-                    Title = p.Title,
-                    Description = p.Description,
-                    Latitude = p.Latitude,
-                    Longitude = p.Longitude,
-                    PhotoUrl = p.PhotoUrl,
-                    CreatedAt = p.CreatedAt,
-                    CreatedByUserId = p.CreatedByUser.Id,
-                    CreatedByUsername = p.CreatedByUser.Username
+                    Pin = p,
+                    Upvotes = _db.PinVotes.Count(v => v.Pin.Id == p.Id && v.Value == VoteValue.Up),
+                    Downvotes = _db.PinVotes.Count(v => v.Pin.Id == p.Id && v.Value == VoteValue.Down),
+                    MyVote = currentUserId == null
+                        ? 0
+                        : _db.PinVotes
+                            .Where(v => v.Pin.Id == p.Id && v.User.Id == currentUserId.Value)
+                            .Select(v => (int?)v.Value)
+                            .FirstOrDefault() ?? 0
                 })
+                .OrderByDescending(x => x.Upvotes - x.Downvotes)
+                .ThenByDescending(x => x.Pin.CreatedAt)
                 .ToListAsync();
 
-            return ToApiValidationSuccess(pins);
+            var response = pins.Select(x => new EventPinDto
+            {
+                Id = x.Pin.Id,
+                Title = x.Pin.Title,
+                Description = x.Pin.Description,
+                Latitude = x.Pin.Latitude,
+                Longitude = x.Pin.Longitude,
+                PhotoUrl = x.Pin.PhotoUrl,
+                CreatedAt = x.Pin.CreatedAt,
+                CreatedByUserId = x.Pin.CreatedByUser.Id,
+                CreatedByUsername = x.Pin.CreatedByUser.Username,
+                Upvotes = x.Upvotes,
+                Downvotes = x.Downvotes,
+                Score = x.Upvotes - x.Downvotes,
+                MyVote = x.MyVote
+            }).ToList();
+
+            return ToApiValidationSuccess(response);
         }
 
         [Authorize]
@@ -83,10 +102,55 @@ namespace WebAPI.Controllers
                 PhotoUrl = pin.PhotoUrl,
                 CreatedAt = pin.CreatedAt,
                 CreatedByUserId = user.Id,
-                CreatedByUsername = user.Username
+                CreatedByUsername = user.Username,
+                Upvotes = 0,
+                Downvotes = 0,
+                Score = 0,
+                MyVote = 0
             };
 
             return ToApiValidationSuccess(response, "Pin created.");
+        }
+
+        [Authorize]
+        [HttpPost("{id:int}/vote")]
+        public async Task<IActionResult> Vote(int id, [FromBody] VoteRequestDto dto)
+        {
+            if (dto.Value != 1 && dto.Value != -1)
+                return ToApiValidationFail("Vote must be 1 or -1.", 400);
+
+            var pin = await _db.EventPins.FirstOrDefaultAsync(p => p.Id == id);
+            if (pin == null)
+                return ToApiValidationFail("Pin not found.", 404);
+
+            var user = await _db.Users.FindAsync(_authUser.Id);
+            if (user == null)
+                return ToApiValidationFail("User not found.", 401);
+
+            var existing = await _db.PinVotes
+                .FirstOrDefaultAsync(v => v.User.Id == user.Id && v.Pin.Id == pin.Id);
+
+            if (existing == null)
+            {
+                _db.PinVotes.Add(new PinVote
+                {
+                    User = user,
+                    Pin = pin,
+                    Value = dto.Value == 1 ? VoteValue.Up : VoteValue.Down
+                });
+            }
+            else if ((int)existing.Value == dto.Value)
+            {
+                _db.PinVotes.Remove(existing);
+            }
+            else
+            {
+                existing.Value = dto.Value == 1 ? VoteValue.Up : VoteValue.Down;
+            }
+
+            await _db.SaveChangesAsync();
+
+            return ToApiValidationSuccess("Vote updated.");
         }
 
         private async Task<string?> SavePhotoAsync(IFormFile? file)

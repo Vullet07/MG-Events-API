@@ -13,5 +13,9 @@ namespace Services.Dtos
         public DateTime CreatedAt { get; set; }
         public int CreatedByUserId { get; set; }
         public string CreatedByUsername { get; set; } = default!;
+        public int Upvotes { get; set; }
+        public int Downvotes { get; set; }
+        public int Score { get; set; }
+        public int MyVote { get; set; }
     }
 }

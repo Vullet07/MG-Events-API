@@ -223,7 +223,10 @@ namespace WebAPI.Controllers
                 Email = user.Email,
                 Username = user.Username,
                 Role = user.Role,
-                PhotoUrl = user.PhotoUrl
+                PhotoUrl = user.PhotoUrl,
+                ThreadsCount = _db.ForumThreads.Count(t => t.CreatedByUser.Id == user.Id),
+                PostsCount = _db.ForumPosts.Count(p => p.User.Id == user.Id && !p.IsDeleted),
+                PinsCount = _db.EventPins.Count(p => p.CreatedByUser.Id == user.Id)
             };
 
             return ToApiValidationSuccess(userDto);

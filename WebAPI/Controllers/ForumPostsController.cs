@@ -1,7 +1,6 @@
-﻿using Data;
+using Data;
 using Data.Models;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Services.AuthUserService;
@@ -27,7 +26,6 @@ namespace WebAPI.Controllers
             _env = env;
         }
 
-        // ---------------- Create post / reply ----------------
         [HttpPost]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> Create([FromForm] CreateForumPostForm dto)
@@ -54,6 +52,8 @@ namespace WebAPI.Controllers
             }
 
             var user = await _db.Users.FindAsync(_authUser.Id);
+            if (user == null)
+                return ToApiValidationFail("Authenticated user not found.", 401);
 
             var post = new ForumPost
             {
@@ -61,7 +61,7 @@ namespace WebAPI.Controllers
                 PhotoUrl = await SavePhotoAsync(dto.Photo),
                 Content = dto.Content,
                 Thread = thread,
-                User = user!,
+                User = user,
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -72,7 +72,7 @@ namespace WebAPI.Controllers
 
             await _db.SaveChangesAsync();
 
-            var postDto = new ForumPostDto
+            var response = new ForumPostDto
             {
                 Id = post.Id,
                 Title = post.Title,
@@ -80,47 +80,68 @@ namespace WebAPI.Controllers
                 Content = post.Content,
                 CreatedAt = post.CreatedAt,
                 UpdatedAt = post.UpdatedAt,
-                UserId = post.User!.Id,
+                UserId = post.User.Id,
                 ThreadId = thread.Id,
-                ParentPostId = dto.ParentPostId
+                ParentPostId = dto.ParentPostId,
+                Upvotes = 0,
+                Downvotes = 0,
+                Score = 0,
+                MyVote = 0
             };
 
-            return ToApiValidationSuccess(postDto, "Post created successfully.");
+            return ToApiValidationSuccess(response, "Post created successfully.");
         }
 
-        // ---------------- Get posts by thread ----------------
-
         [HttpGet("thread/{threadId:int}")]
-        public async Task<IActionResult> GetByThread(
-    int threadId,
-    [FromQuery] PagingQuery paging)
+        public async Task<IActionResult> GetByThread(int threadId, [FromQuery] PagingQuery paging)
         {
+            var currentUserId = _authUser.Id;
             var query = _db.ForumPosts
-                .Where(p => p.Thread.Id == threadId && !p.IsDeleted);
+                .Where(p => EF.Property<int>(p, "ThreadId") == threadId && !p.IsDeleted);
 
             var totalCount = await query.CountAsync();
 
             var posts = await query
-                .OrderBy(p => p.CreatedAt)
+                .Select(p => new
+                {
+                    Post = p,
+                    UserId = EF.Property<int>(p, "UserId"),
+                    ThreadId = EF.Property<int>(p, "ThreadId"),
+                    Upvotes = _db.PostVotes.Count(v => v.Post.Id == p.Id && v.Value == VoteValue.Up),
+                    Downvotes = _db.PostVotes.Count(v => v.Post.Id == p.Id && v.Value == VoteValue.Down),
+                    MyVote = currentUserId == null
+                        ? 0
+                        : _db.PostVotes
+                            .Where(v => v.Post.Id == p.Id && v.User.Id == currentUserId.Value)
+                            .Select(v => (int?)v.Value)
+                            .FirstOrDefault() ?? 0
+                })
+                .OrderByDescending(x => x.Upvotes - x.Downvotes)
+                .ThenByDescending(x => x.Post.CreatedAt)
                 .Skip(paging.Skip)
                 .Take(paging.PageSize)
-                .Select(p => new ForumPostDto
-                {
-                    Id = p.Id,
-                    Title = p.Title,
-                    PhotoUrl = p.PhotoUrl,
-                    Content = p.Content,
-                    CreatedAt = p.CreatedAt,
-                    UpdatedAt = p.UpdatedAt,
-                    UserId = p.User.Id,
-                    ThreadId = p.Thread.Id,
-                    ParentPostId = p.ParentPostId
-                })
                 .ToListAsync();
+
+            var mapped = posts.Select(x => new ForumPostDto
+            {
+                Id = x.Post.Id,
+                Title = x.Post.Title,
+                PhotoUrl = x.Post.PhotoUrl,
+                Content = x.Post.Content,
+                CreatedAt = x.Post.CreatedAt,
+                UpdatedAt = x.Post.UpdatedAt,
+                UserId = x.UserId,
+                ThreadId = x.ThreadId,
+                ParentPostId = x.Post.ParentPostId,
+                Upvotes = x.Upvotes,
+                Downvotes = x.Downvotes,
+                Score = x.Upvotes - x.Downvotes,
+                MyVote = x.MyVote
+            }).ToList();
 
             var response = new PagedResponse<ForumPostDto>
             {
-                Items = posts,
+                Items = mapped,
                 Page = paging.Page,
                 PageSize = paging.PageSize,
                 TotalCount = totalCount
@@ -129,7 +150,45 @@ namespace WebAPI.Controllers
             return ToApiValidationSuccess(response);
         }
 
-        // ---------------- Delete post ----------------
+        [HttpPost("{id:int}/vote")]
+        public async Task<IActionResult> Vote(int id, [FromBody] VoteRequestDto dto)
+        {
+            if (dto.Value != 1 && dto.Value != -1)
+                return ToApiValidationFail("Vote must be 1 or -1.", 400);
+
+            var post = await _db.ForumPosts.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted);
+            if (post == null)
+                return ToApiValidationFail("Post not found.", 404);
+
+            var user = await _db.Users.FindAsync(_authUser.Id);
+            if (user == null)
+                return ToApiValidationFail("User not found.", 401);
+
+            var existing = await _db.PostVotes
+                .FirstOrDefaultAsync(v => v.User.Id == user.Id && v.Post.Id == post.Id);
+
+            if (existing == null)
+            {
+                _db.PostVotes.Add(new PostVote
+                {
+                    User = user,
+                    Post = post,
+                    Value = dto.Value == 1 ? VoteValue.Up : VoteValue.Down
+                });
+            }
+            else if ((int)existing.Value == dto.Value)
+            {
+                _db.PostVotes.Remove(existing);
+            }
+            else
+            {
+                existing.Value = dto.Value == 1 ? VoteValue.Up : VoteValue.Down;
+            }
+
+            await _db.SaveChangesAsync();
+
+            return ToApiValidationSuccess("Vote updated.");
+        }
 
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> Delete(int id)
@@ -143,7 +202,6 @@ namespace WebAPI.Controllers
 
             if (_authUser.Role == Role.Student && post.User.Id != _authUser.Id)
                 return ToApiValidationFail("You can't delete other users' posts", 400);
-
 
             post.IsDeleted = true;
             post.UpdatedAt = DateTime.UtcNow;

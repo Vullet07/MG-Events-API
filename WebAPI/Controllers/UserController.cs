@@ -1,7 +1,6 @@
-﻿using Data;
+using Data;
 using Data.Models;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -29,31 +28,23 @@ namespace WebAPI.Controllers
             _env = env;
         }
 
-        // ---------------- GET ALL ----------------
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Teacher")]
         [HttpGet]
         public async Task<IActionResult> GetAll([FromQuery] PagingQuery paging)
         {
             var query = _db.Users.AsQueryable();
-
             var totalCount = await query.CountAsync();
 
             var users = await query
                 .Skip(paging.Skip)
                 .Take(paging.PageSize)
-                .Select(u => new UserDto
-                {
-                    Id = u.Id,
-                    Username = u.Username,
-                    Email = u.Email,
-                    Role = u.Role,
-                    PhotoUrl = u.PhotoUrl
-                })
                 .ToListAsync();
+
+            var mapped = users.Select(u => ToUserDto(u, true)).ToList();
 
             var response = new PagedResponse<UserDto>
             {
-                Items = users,
+                Items = mapped,
                 Page = paging.Page,
                 PageSize = paging.PageSize,
                 TotalCount = totalCount
@@ -62,49 +53,151 @@ namespace WebAPI.Controllers
             return ToApiValidationSuccess(response);
         }
 
-        // ---------------- GET BY ID ----------------
+        [HttpGet("profile")]
+        public async Task<IActionResult> GetMyProfile()
+        {
+            if (_authUser.Id == null)
+                return ToApiValidationFail("User not authenticated.", 401);
+
+            var user = await _db.Users.FindAsync(_authUser.Id.Value);
+            if (user == null)
+                return ToApiValidationFail("User not found.", 404);
+
+            return ToApiValidationSuccess(ToUserDto(user, true));
+        }
+
         [HttpGet("{id:int}")]
-        [Authorize]
         public async Task<IActionResult> GetById(int id)
         {
             var user = await _db.Users.FindAsync(id);
             if (user == null)
                 return ToApiValidationFail("User not found.", 404);
 
-            var userDto = new UserDto
-            {
-                Id = user.Id,
-                Username = user.Username,
-                Email = user.Email,
-                Role = user.Role,
-                PhotoUrl = user.PhotoUrl
-            };
-
-            return ToApiValidationSuccess(userDto);
+            return ToApiValidationSuccess(ToUserDto(user, true));
         }
 
-        // ---------------- GET PUBLIC BY ID ----------------
         [HttpGet("public/{id:int}")]
-        [Authorize]
         public async Task<IActionResult> GetPublicById(int id)
         {
             var user = await _db.Users.FindAsync(id);
             if (user == null)
                 return ToApiValidationFail("User not found.", 404);
 
-            var userDto = new UserDto
-            {
-                Id = user.Id,
-                Username = user.Username,
-                Email = user.Email,
-                Role = user.Role,
-                PhotoUrl = user.PhotoUrl
-            };
-
-            return ToApiValidationSuccess(userDto);
+            return ToApiValidationSuccess(ToUserDto(user, true));
         }
 
-        // ---------------- UPDATE USER ----------------
+        [HttpGet("public/{id:int}/threads")]
+        public async Task<IActionResult> GetPublicThreads(int id, [FromQuery] PagingQuery paging)
+        {
+            var userExists = await _db.Users.AnyAsync(u => u.Id == id);
+            if (!userExists)
+                return ToApiValidationFail("User not found.", 404);
+
+            var query = _db.ForumThreads
+                .Where(t => EF.Property<int>(t, "CreatedByUserId") == id);
+
+            var totalCount = await query.CountAsync();
+            var items = await query
+                .OrderByDescending(t => t.LastPostAt ?? t.CreatedAt)
+                .Skip(paging.Skip)
+                .Take(paging.PageSize)
+                .Select(t => new PublicUserThreadItemDto
+                {
+                    ThreadId = t.Id,
+                    Title = t.Title,
+                    CreatedAt = t.CreatedAt,
+                    LastPostAt = t.LastPostAt,
+                    IsPinned = t.IsPinned,
+                    IsLocked = t.IsLocked
+                })
+                .ToListAsync();
+
+            return ToApiValidationSuccess(new PagedResponse<PublicUserThreadItemDto>
+            {
+                Items = items,
+                Page = paging.Page,
+                PageSize = paging.PageSize,
+                TotalCount = totalCount
+            });
+        }
+
+        [HttpGet("public/{id:int}/posts")]
+        public async Task<IActionResult> GetPublicPosts(int id, [FromQuery] PagingQuery paging)
+        {
+            var userExists = await _db.Users.AnyAsync(u => u.Id == id);
+            if (!userExists)
+                return ToApiValidationFail("User not found.", 404);
+
+            var query = _db.ForumPosts
+                .Where(p => !p.IsDeleted && EF.Property<int>(p, "UserId") == id);
+
+            var totalCount = await query.CountAsync();
+            var items = await query
+                .OrderByDescending(p => p.CreatedAt)
+                .Skip(paging.Skip)
+                .Take(paging.PageSize)
+                .Select(p => new PublicUserPostItemDto
+                {
+                    PostId = p.Id,
+                    ThreadId = EF.Property<int>(p, "ThreadId"),
+                    ThreadTitle = p.Thread.Title,
+                    Title = p.Title,
+                    Content = p.Content,
+                    PhotoUrl = p.PhotoUrl,
+                    CreatedAt = p.CreatedAt,
+                    ParentPostId = p.ParentPostId,
+                    Upvotes = _db.PostVotes.Count(v => v.Post.Id == p.Id && v.Value == VoteValue.Up),
+                    Downvotes = _db.PostVotes.Count(v => v.Post.Id == p.Id && v.Value == VoteValue.Down)
+                })
+                .ToListAsync();
+
+            return ToApiValidationSuccess(new PagedResponse<PublicUserPostItemDto>
+            {
+                Items = items,
+                Page = paging.Page,
+                PageSize = paging.PageSize,
+                TotalCount = totalCount
+            });
+        }
+
+        [HttpGet("public/{id:int}/pins")]
+        public async Task<IActionResult> GetPublicPins(int id, [FromQuery] PagingQuery paging)
+        {
+            var userExists = await _db.Users.AnyAsync(u => u.Id == id);
+            if (!userExists)
+                return ToApiValidationFail("User not found.", 404);
+
+            var query = _db.EventPins
+                .Where(p => EF.Property<int>(p, "CreatedByUserId") == id);
+
+            var totalCount = await query.CountAsync();
+            var items = await query
+                .OrderByDescending(p => p.CreatedAt)
+                .Skip(paging.Skip)
+                .Take(paging.PageSize)
+                .Select(p => new PublicUserPinItemDto
+                {
+                    PinId = p.Id,
+                    Title = p.Title,
+                    Description = p.Description,
+                    PhotoUrl = p.PhotoUrl,
+                    Latitude = p.Latitude,
+                    Longitude = p.Longitude,
+                    CreatedAt = p.CreatedAt,
+                    Upvotes = _db.PinVotes.Count(v => v.Pin.Id == p.Id && v.Value == VoteValue.Up),
+                    Downvotes = _db.PinVotes.Count(v => v.Pin.Id == p.Id && v.Value == VoteValue.Down)
+                })
+                .ToListAsync();
+
+            return ToApiValidationSuccess(new PagedResponse<PublicUserPinItemDto>
+            {
+                Items = items,
+                Page = paging.Page,
+                PageSize = paging.PageSize,
+                TotalCount = totalCount
+            });
+        }
+
         [HttpPut("{id:int}")]
         public async Task<IActionResult> Update(int id, [FromBody] UpdateUserDto dto)
         {
@@ -123,8 +216,13 @@ namespace WebAPI.Controllers
                 user.Email = dto.Email;
             }
 
-            if (!string.IsNullOrEmpty(dto.Username))
-                user.Username = dto.Username;
+            if (!string.IsNullOrWhiteSpace(dto.Username))
+            {
+                var username = dto.Username.Trim();
+                if (await _db.Users.AnyAsync(u => u.Username == username && u.Id != id))
+                    return ToApiValidationFail("Username is already used by another user.", 400);
+                user.Username = username;
+            }
 
             if (!string.IsNullOrEmpty(dto.PhotoUrl))
                 user.PhotoUrl = dto.PhotoUrl;
@@ -137,19 +235,37 @@ namespace WebAPI.Controllers
 
             await _db.SaveChangesAsync();
 
-            var userDto = new UserDto
-            {
-                Id = user.Id,
-                Username = user.Username,
-                Email = user.Email,
-                Role = user.Role,
-                PhotoUrl = user.PhotoUrl
-            };
-
-            return ToApiValidationSuccess(userDto, "User updated successfully.");
+            return ToApiValidationSuccess(ToUserDto(user, true), "User updated successfully.");
         }
 
-        // ---------------- UPLOAD PROFILE PHOTO ----------------
+        [Authorize(Roles = "Admin")]
+        [HttpPost("create-teacher")]
+        public async Task<IActionResult> CreateTeacher([FromBody] CreateUserDto dto)
+        {
+            if (!ModelState.IsValid)
+                return ToApiValidationFail("Invalid teacher data.");
+
+            if (await _db.Users.AnyAsync(u => u.Username == dto.Username))
+                return ToApiValidationFail("Username already exists.", 409);
+
+            if (await _db.Users.AnyAsync(u => u.Email == dto.Email))
+                return ToApiValidationFail("Email already registered.", 409);
+
+            var user = new User
+            {
+                Username = dto.Username,
+                Email = dto.Email,
+                Role = Role.Teacher,
+                PhotoUrl = dto.PhotoUrl
+            };
+            user.PasswordHash = _passwordHasher.HashPassword(user, dto.Password);
+
+            _db.Users.Add(user);
+            await _db.SaveChangesAsync();
+
+            return ToApiValidationSuccess(ToUserDto(user, true), "Teacher account created.");
+        }
+
         [HttpPost("profile-photo")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UploadProfilePhoto(IFormFile file)
@@ -182,16 +298,7 @@ namespace WebAPI.Controllers
             user.PhotoUrl = $"{baseUrl}/{relativePath.Replace("\\\\", "/")}/{fileName}";
             await _db.SaveChangesAsync();
 
-            var userDto = new UserDto
-            {
-                Id = user.Id,
-                Username = user.Username,
-                Email = user.Email,
-                Role = user.Role,
-                PhotoUrl = user.PhotoUrl
-            };
-
-            return ToApiValidationSuccess(userDto, "Profile photo updated.");
+            return ToApiValidationSuccess(ToUserDto(user, true), "Profile photo updated.");
         }
 
         [Authorize(Roles = "Admin,Teacher")]
@@ -202,8 +309,8 @@ namespace WebAPI.Controllers
             if (user == null)
                 return ToApiValidationFail("User not found.", 404);
 
-            if (user.Role == Role.Admin)
-                return ToApiValidationFail("You can't ban admins.", 403);
+            if (user.Role == Role.Admin || user.Role == Role.Teacher)
+                return ToApiValidationFail("You can't ban admins or teachers.", 403);
 
             if (_authUser.Id == user.Id)
                 return ToApiValidationFail("You can't ban yourself.", 403);
@@ -233,8 +340,8 @@ namespace WebAPI.Controllers
             if (user == null)
                 return ToApiValidationFail("User not found.", 404);
 
-            if (user.Role == Role.Admin)
-                return ToApiValidationFail("You can't unban admins.", 403);
+            if (user.Role == Role.Admin || user.Role == Role.Teacher)
+                return ToApiValidationFail("You can't unban admins or teachers.", 403);
 
             if (_authUser.Id == user.Id)
                 return ToApiValidationFail("You can't unban yourself.", 403);
@@ -255,7 +362,6 @@ namespace WebAPI.Controllers
             }, "User unbanned successfully.");
         }
 
-        // ---------------- DELETE USER ----------------
         [HttpDelete("{id:int}")]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> Delete(int id)
@@ -269,6 +375,27 @@ namespace WebAPI.Controllers
             await _db.SaveChangesAsync();
 
             return ToApiValidationSuccess("User deleted successfully.");
+        }
+
+        private UserDto ToUserDto(User user, bool includeStats)
+        {
+            var dto = new UserDto
+            {
+                Id = user.Id,
+                Username = user.Username,
+                Email = user.Email,
+                Role = user.Role,
+                PhotoUrl = user.PhotoUrl
+            };
+
+            if (includeStats)
+            {
+                dto.ThreadsCount = _db.ForumThreads.Count(t => t.CreatedByUser.Id == user.Id);
+                dto.PostsCount = _db.ForumPosts.Count(p => p.User.Id == user.Id && !p.IsDeleted);
+                dto.PinsCount = _db.EventPins.Count(p => p.CreatedByUser.Id == user.Id);
+            }
+
+            return dto;
         }
     }
 }

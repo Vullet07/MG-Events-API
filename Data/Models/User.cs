@@ -33,5 +33,6 @@ namespace Data.Models
         public bool IsBanned { get; set; }
         public DateTime? BannedUntil { get; set; }
         public string? BanReason { get; set; }
+
     }
 }

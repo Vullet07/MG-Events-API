@@ -20,6 +20,12 @@ namespace Data
 
         public DbSet<EventPin> EventPins { get; set; }
 
+        public DbSet<PostVote> PostVotes { get; set; }
+
+        public DbSet<PinVote> PinVotes { get; set; }
+
+        public DbSet<Report> Reports { get; set; }
+
         public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -87,6 +93,59 @@ namespace Data
                 entity.HasOne(e => e.CreatedByUser)
                       .WithMany()
                       .HasForeignKey("CreatedByUserId")
+                      .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<PostVote>(entity =>
+            {
+                entity.HasKey(v => v.Id);
+
+                entity.HasOne(v => v.User)
+                      .WithMany()
+                      .HasForeignKey("UserId")
+                      .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(v => v.Post)
+                      .WithMany()
+                      .HasForeignKey("PostId")
+                      .OnDelete(DeleteBehavior.Cascade);
+
+                entity.HasIndex("UserId", "PostId")
+                      .IsUnique();
+            });
+
+            modelBuilder.Entity<PinVote>(entity =>
+            {
+                entity.HasKey(v => v.Id);
+
+                entity.HasOne(v => v.User)
+                      .WithMany()
+                      .HasForeignKey("UserId")
+                      .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(v => v.Pin)
+                      .WithMany()
+                      .HasForeignKey("PinId")
+                      .OnDelete(DeleteBehavior.Cascade);
+
+                entity.HasIndex("UserId", "PinId")
+                      .IsUnique();
+            });
+
+            modelBuilder.Entity<Report>(entity =>
+            {
+                entity.HasKey(r => r.Id);
+                entity.Property(r => r.Reason).IsRequired().HasMaxLength(200);
+                entity.Property(r => r.Details).HasMaxLength(2000);
+
+                entity.HasOne(r => r.Reporter)
+                      .WithMany()
+                      .HasForeignKey("ReporterId")
+                      .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(r => r.ResolvedBy)
+                      .WithMany()
+                      .HasForeignKey("ResolvedByUserId")
                       .OnDelete(DeleteBehavior.Restrict);
             });
             modelBuilder.Entity<PasswordResetToken>()
