@@ -60,7 +60,7 @@ namespace WebAPI.Controllers
             return ToApiValidationSuccess("Report submitted.");
         }
 
-        [Authorize(Roles = "Admin,Teacher")]
+        [Authorize(Roles = "Admin")]
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
@@ -107,7 +107,7 @@ namespace WebAPI.Controllers
             return ToApiValidationSuccess(reports);
         }
 
-        [Authorize(Roles = "Admin,Teacher")]
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id:int}/status")]
         public async Task<IActionResult> UpdateStatus(int id, [FromBody] UpdateReportStatusDto dto)
         {

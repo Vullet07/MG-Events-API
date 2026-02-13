@@ -33,6 +33,9 @@ namespace WebAPI.Controllers
         public async Task<IActionResult> GetAll([FromQuery] PagingQuery paging)
         {
             var query = _db.Users.AsQueryable();
+            if (_authUser.Role == Role.Teacher)
+                query = query.Where(u => u.Role == Role.Student);
+
             var totalCount = await query.CountAsync();
 
             var users = await query
