@@ -242,31 +242,87 @@ namespace WebAPI.Controllers
         }
 
         [Authorize(Roles = "Admin")]
-        [HttpPost("create-teacher")]
-        public async Task<IActionResult> CreateTeacher([FromBody] CreateUserDto dto)
+        [HttpGet("teacher-requests")]
+        public async Task<IActionResult> GetTeacherRequests()
         {
-            if (!ModelState.IsValid)
-                return ToApiValidationFail("Invalid teacher data.");
+            var requests = await _db.TeacherRegistrationRequests
+                .Include(r => r.ReviewedBy)
+                .OrderBy(r => r.Status)
+                .ThenByDescending(r => r.CreatedAt)
+                .Select(r => new TeacherRegistrationRequestDto
+                {
+                    Id = r.Id,
+                    Username = r.Username,
+                    Email = r.Email,
+                    Motivation = r.Motivation,
+                    Status = r.Status,
+                    CreatedAt = r.CreatedAt,
+                    ReviewedAt = r.ReviewedAt,
+                    ReviewNote = r.ReviewNote,
+                    ReviewedByUsername = r.ReviewedBy != null ? r.ReviewedBy.Username : null
+                })
+                .ToListAsync();
 
-            if (await _db.Users.AnyAsync(u => u.Username == dto.Username))
-                return ToApiValidationFail("Username already exists.", 409);
+            return ToApiValidationSuccess(requests);
+        }
 
-            if (await _db.Users.AnyAsync(u => u.Email == dto.Email))
-                return ToApiValidationFail("Email already registered.", 409);
+        [Authorize(Roles = "Admin")]
+        [HttpPost("teacher-requests/{id:int}/approve")]
+        public async Task<IActionResult> ApproveTeacherRequest(int id, [FromBody] ReviewTeacherRegistrationRequestDto dto)
+        {
+            var request = await _db.TeacherRegistrationRequests.FirstOrDefaultAsync(r => r.Id == id);
+            if (request == null)
+                return ToApiValidationFail("Teacher request not found.", 404);
 
-            var user = new User
+            if (request.Status != TeacherRegistrationStatus.Pending)
+                return ToApiValidationFail("Teacher request is already reviewed.", 400);
+
+            if (await _db.Users.AnyAsync(u => u.Username == request.Username))
+                return ToApiValidationFail("Cannot approve because username is already in use.", 409);
+
+            if (await _db.Users.AnyAsync(u => u.Email == request.Email))
+                return ToApiValidationFail("Cannot approve because email is already in use.", 409);
+
+            var teacher = new User
             {
-                Username = dto.Username,
-                Email = dto.Email,
+                Username = request.Username,
+                Email = request.Email,
                 Role = Role.Teacher,
-                PhotoUrl = dto.PhotoUrl
+                PasswordHash = request.PasswordHash
             };
-            user.PasswordHash = _passwordHasher.HashPassword(user, dto.Password);
 
-            _db.Users.Add(user);
+            request.Status = TeacherRegistrationStatus.Approved;
+            request.ReviewedAt = DateTime.UtcNow;
+            request.ReviewNote = dto.Note?.Trim();
+            if (_authUser.Id.HasValue)
+                request.ReviewedBy = await _db.Users.FindAsync(_authUser.Id.Value);
+
+            _db.Users.Add(teacher);
             await _db.SaveChangesAsync();
 
-            return ToApiValidationSuccess(ToUserDto(user, true), "Teacher account created.");
+            return ToApiValidationSuccess("Teacher request approved and account created.");
+        }
+
+        [Authorize(Roles = "Admin")]
+        [HttpPost("teacher-requests/{id:int}/reject")]
+        public async Task<IActionResult> RejectTeacherRequest(int id, [FromBody] ReviewTeacherRegistrationRequestDto dto)
+        {
+            var request = await _db.TeacherRegistrationRequests.FirstOrDefaultAsync(r => r.Id == id);
+            if (request == null)
+                return ToApiValidationFail("Teacher request not found.", 404);
+
+            if (request.Status != TeacherRegistrationStatus.Pending)
+                return ToApiValidationFail("Teacher request is already reviewed.", 400);
+
+            request.Status = TeacherRegistrationStatus.Rejected;
+            request.ReviewedAt = DateTime.UtcNow;
+            request.ReviewNote = dto.Note?.Trim();
+            if (_authUser.Id.HasValue)
+                request.ReviewedBy = await _db.Users.FindAsync(_authUser.Id.Value);
+
+            await _db.SaveChangesAsync();
+
+            return ToApiValidationSuccess("Teacher request rejected.");
         }
 
         [HttpPost("profile-photo")]

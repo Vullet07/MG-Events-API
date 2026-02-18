@@ -139,6 +139,48 @@ namespace WebAPI.Controllers
             return ToApiValidationSuccess(response, "User registered successfully.");
         }
 
+        [HttpPost("register-teacher-request")]
+        [AllowAnonymous]
+        public async Task<IActionResult> RegisterTeacherRequest([FromBody] CreateTeacherRegistrationRequestDto dto)
+        {
+            if (!ModelState.IsValid)
+                return ToApiValidationFail("Invalid teacher registration data.");
+
+            if (await _db.Users.AnyAsync(u => u.Username == dto.Username))
+                return ToApiValidationFail("Username already exists.", 409);
+
+            if (await _db.Users.AnyAsync(u => u.Email == dto.Email))
+                return ToApiValidationFail("Email already registered.", 409);
+
+            var duplicatePending = await _db.TeacherRegistrationRequests.AnyAsync(r =>
+                r.Status == TeacherRegistrationStatus.Pending &&
+                (r.Username == dto.Username || r.Email == dto.Email));
+
+            if (duplicatePending)
+                return ToApiValidationFail("A pending teacher request with this username or email already exists.", 409);
+
+            var teacherCandidate = new User
+            {
+                Username = dto.Username,
+                Email = dto.Email,
+                Role = Role.Teacher
+            };
+
+            var request = new TeacherRegistrationRequest
+            {
+                Username = dto.Username,
+                Email = dto.Email,
+                PasswordHash = _passwordHasher.HashPassword(teacherCandidate, dto.Password),
+                Motivation = dto.Motivation?.Trim(),
+                Status = TeacherRegistrationStatus.Pending
+            };
+
+            _db.TeacherRegistrationRequests.Add(request);
+            await _db.SaveChangesAsync();
+
+            return ToApiValidationSuccess("Teacher registration request submitted. An admin must approve it.");
+        }
+
         [HttpPost("forgot-password")]
         [AllowAnonymous]
         public async Task<IActionResult> ForgotPassword(ForgotPasswordDto dto)

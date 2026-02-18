@@ -28,6 +28,8 @@ namespace Data
 
         public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
 
+        public DbSet<TeacherRegistrationRequest> TeacherRegistrationRequests { get; set; }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -148,6 +150,22 @@ namespace Data
                       .HasForeignKey("ResolvedByUserId")
                       .OnDelete(DeleteBehavior.Restrict);
             });
+
+            modelBuilder.Entity<TeacherRegistrationRequest>(entity =>
+            {
+                entity.HasKey(r => r.Id);
+                entity.Property(r => r.Username).IsRequired().HasMaxLength(100);
+                entity.Property(r => r.Email).IsRequired();
+                entity.Property(r => r.PasswordHash).IsRequired();
+                entity.Property(r => r.Motivation).HasMaxLength(500);
+                entity.Property(r => r.ReviewNote).HasMaxLength(300);
+
+                entity.HasOne(r => r.ReviewedBy)
+                      .WithMany()
+                      .HasForeignKey("ReviewedByUserId")
+                      .OnDelete(DeleteBehavior.SetNull);
+            });
+
             modelBuilder.Entity<PasswordResetToken>()
                 .HasIndex(x => x.TokenHash)
                 .IsUnique();
