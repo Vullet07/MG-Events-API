@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Services.AuthUserService;
 using Services.Dtos;
+using Services.Maps;
 using WebAPI.Extensions;
 using WebAPI.Models;
 
@@ -74,6 +75,9 @@ namespace WebAPI.Controllers
         {
             if (string.IsNullOrWhiteSpace(dto.Title))
                 return ToApiValidationFail("Title is required.");
+
+            if (!IndoorMapGeometry.TryResolveZone(dto.Latitude, dto.Longitude, out _))
+                return ToApiValidationFail("Pin coordinates must belong to a valid mapped zone.", 400);
 
             var user = await _db.Users.FindAsync(_authUser.Id);
             if (user == null)
@@ -173,7 +177,7 @@ namespace WebAPI.Controllers
             }
 
             var baseUrl = $"{Request.Scheme}://{Request.Host}";
-            return $"{baseUrl}/{relativePath.Replace("\\\\", "/")}/{fileName}";
+            return $"{baseUrl}/{relativePath.Replace("\\", "/")}/{fileName}";
         }
     }
 }

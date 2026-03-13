@@ -2,12 +2,37 @@ using Data;
 using Data.Models;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Services.Maps;
 
 namespace Services.Seeding
 {
     public class DataSeeder : IDataSeeder
     {
         private const int TargetCount = 50;
+
+        private static readonly (string LayerId, double X, double Y, string Title, string Description)[] PinSeeds =
+        [
+            ("campus", 410, 210, "Натоварен вход", "Събиране на хора пред северната алея и нужда от организация."),
+            ("campus", 655, 255, "Повреда до игрището", "Зона около игрището има нужда от оглед и реакция."),
+            ("campus", 690, 600, "Паркинг сигнал", "Необходим е преглед на маркировката и достъпа около паркинга."),
+            ("main:1", 342, 292, "Лоби сигнал", "Нужно е внимание в лобито на голямата сграда."),
+            ("main:1", 404, 205, "ФВС салон 1", "Сигнал, свързан със спортната зона на първи етаж."),
+            ("main:1", 420, 655, "Столова", "Съобщение за нужда от поддръжка около столовата."),
+            ("main:2", 424, 178, "ФВС салон 2", "Сигнал за оборудване в спортния салон."),
+            ("main:2", 348, 318, "Коридор 2 етаж", "Необходим оглед на коридора и движението между стаите."),
+            ("main:2", 190, 676, "Стълбище 2 етаж", "Проблем около стълбищната клетка."),
+            ("main:3", 124, 160, "Библиотека", "Сигнал, свързан с библиотеката."),
+            ("main:3", 222, 652, "Стълбище 3 етаж", "Необходим е оглед около стълбището."),
+            ("main:4", 124, 160, "Лаборатория програмиране", "Проблем в лабораторията по програмиране."),
+            ("main:4", 222, 652, "Стълбище 4 етаж", "Сигнал за достъп и безопасност около стълбището."),
+            ("small:1", 315, 170, "Лаборатория физика", "Сигнал в зоната на физиката."),
+            ("small:1", 535, 170, "Стая 113", "Проблем, отбелязан около стая 113."),
+            ("small:1", 535, 498, "Стълбище малка сграда", "Сигнал в общата зона на стълбището."),
+            ("small:2", 314, 170, "Стая 211", "Нужно е внимание около стая 211."),
+            ("small:2", 535, 170, "Стая 213", "Сигнал, свързан със стая 213."),
+            ("small:3", 315, 180, "Технологии и иновации", "Сигнал в STEM зоната."),
+            ("small:3", 425, 160, "Стая 315", "Отбелязан е проблем в стая 315.")
+        ];
 
         private readonly AppDbContext _db;
         private readonly IPasswordHasher<User> _passwordHasher;
@@ -150,17 +175,17 @@ namespace Services.Seeding
         private List<EventPin> CreatePins(List<User> users)
         {
             var pins = new List<EventPin>(TargetCount);
-            var baseLat = 42.6977;
-            var baseLng = 23.3219;
 
             for (var i = 1; i <= TargetCount; i++)
             {
+                var seed = PinSeeds[(i - 1) % PinSeeds.Length];
+                var encoded = IndoorMapGeometry.EncodeLayerPoint(seed.LayerId, seed.X, seed.Y);
                 pins.Add(new EventPin
                 {
-                    Title = $"Event pin {i}",
-                    Description = $"Observed issue #{i} with context for maintenance teams.",
-                    Latitude = baseLat + (i % 10) * 0.0012,
-                    Longitude = baseLng + (i % 10) * 0.0011,
+                    Title = $"{seed.Title} #{i}",
+                    Description = seed.Description,
+                    Latitude = encoded.Latitude,
+                    Longitude = encoded.Longitude,
                     CreatedByUser = users[(i * 5) % users.Count],
                     CreatedAt = DateTime.UtcNow.AddHours(-i * 2)
                 });
