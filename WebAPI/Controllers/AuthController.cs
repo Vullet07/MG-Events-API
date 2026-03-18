@@ -12,6 +12,8 @@ using Services.PasswordResetService;
 using Services.PasswordResetService.EmailService;
 using System.Linq;
 using WebAPI.Extensions;
+using WebAPI.Services.Accounts;
+using WebAPI.Services.Security;
 
 namespace WebAPI.Controllers
 {
@@ -23,15 +25,27 @@ namespace WebAPI.Controllers
         private readonly IPasswordHasher<User> _passwordHasher;
         private readonly IAuthUserService _authUserService;
         private readonly IEmailService _emailService;
+        private readonly IUserLifecycleService _userLifecycleService;
+        private readonly ILoginAttemptQuarantineService _loginAttemptQuarantineService;
         private readonly AppDbContext _db;
 
-        public AuthController(IConfiguration configuration, ITokenService tokenService, IPasswordHasher<User> passwordHasher, IAuthUserService authUserService, IEmailService emailService, AppDbContext db)
+        public AuthController(
+            IConfiguration configuration,
+            ITokenService tokenService,
+            IPasswordHasher<User> passwordHasher,
+            IAuthUserService authUserService,
+            IEmailService emailService,
+            IUserLifecycleService userLifecycleService,
+            ILoginAttemptQuarantineService loginAttemptQuarantineService,
+            AppDbContext db)
         {
             _backendBaseUrl = configuration["Backend:BaseUrl"]!;
             _tokenService = tokenService;
             _passwordHasher = passwordHasher;
             _authUserService = authUserService;
             _emailService = emailService;
+            _userLifecycleService = userLifecycleService;
+            _loginAttemptQuarantineService = loginAttemptQuarantineService;
             _db = db;
         }
 
@@ -44,13 +58,37 @@ namespace WebAPI.Controllers
             if (dto == null || string.IsNullOrWhiteSpace(dto.Identifier) || string.IsNullOrWhiteSpace(dto.Password))
                 return ToApiValidationFail("Missing login data");
 
+            var remoteAddress = GetRemoteAddress();
+            var quarantineState = _loginAttemptQuarantineService.GetState(remoteAddress);
+            if (quarantineState.IsQuarantined)
+            {
+                return ToApiValidationFail(
+                    $"Too many failed login attempts. Try again after {quarantineState.ExpiresAtUtc:yyyy-MM-dd HH:mm}.",
+                    429);
+            }
+
             // Find user by username OR email
             var user = await _db.Users
-                .AsNoTracking()
                 .FirstOrDefaultAsync(u => u.Username == dto.Identifier || u.Email == dto.Identifier);
 
             if (user == null)
+            {
+                var failureState = _loginAttemptQuarantineService.RegisterFailure(remoteAddress);
+                if (failureState.IsQuarantined)
+                {
+                    return ToApiValidationFail(
+                        $"Too many failed login attempts. Try again after {failureState.ExpiresAtUtc:yyyy-MM-dd HH:mm}.",
+                        429);
+                }
+
                 return ToApiValidationFail("Invalid credentials", 401);
+            }
+
+            if (user.ScheduledDeletionAt != null && user.ScheduledDeletionAt <= DateTime.UtcNow)
+            {
+                await _userLifecycleService.DeleteUserWithContentAsync(user.Id);
+                return ToApiValidationFail("Student account expired and has been removed.", 403);
+            }
 
             // Check if user is banned
             if (user.IsBanned)
@@ -66,9 +104,21 @@ namespace WebAPI.Controllers
             }
 
             // Verify password
-            var passwordValid = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, dto.Password);
+            var passwordValid = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash ?? string.Empty, dto.Password);
             if (passwordValid == PasswordVerificationResult.Failed)
+            {
+                var failureState = _loginAttemptQuarantineService.RegisterFailure(remoteAddress);
+                if (failureState.IsQuarantined)
+                {
+                    return ToApiValidationFail(
+                        $"Too many failed login attempts. Try again after {failureState.ExpiresAtUtc:yyyy-MM-dd HH:mm}.",
+                        429);
+                }
+
                 return ToApiValidationFail("Invalid credentials", 401);
+            }
+
+            _loginAttemptQuarantineService.ClearFailures(remoteAddress);
 
             // Generate JWT
             var tokenResult = _tokenService.GenerateToken(user.Id.ToString(), user.Role.ToString(), user.Username);
@@ -77,14 +127,7 @@ namespace WebAPI.Controllers
             {
                 Token = tokenResult.Token,
                 ExpiresAt = tokenResult.ExpiresAt,
-                User = new UserDto
-                {
-                    Id = user.Id,
-                    Username = user.Username,
-                    Email = user.Email,
-                    Role = user.Role,
-                    PhotoUrl = user.PhotoUrl
-                }
+                User = ToUserDto(user)
             };
 
             return ToApiValidationSuccess(response, "Login successful");
@@ -109,7 +152,10 @@ namespace WebAPI.Controllers
                 Username = dto.Username,
                 Email = dto.Email,
                 Role = Role.Student,
-                PhotoUrl = dto.PhotoUrl
+                PhotoUrl = dto.PhotoUrl,
+                GradeLevel = dto.GradeLevel,
+                SchoolYearStart = _userLifecycleService.DetermineSchoolYearStart(),
+                ScheduledDeletionAt = _userLifecycleService.CalculateScheduledDeletionUtc(dto.GradeLevel)
             };
             user.PasswordHash = _passwordHasher.HashPassword(user, dto.Password);
 
@@ -126,14 +172,7 @@ namespace WebAPI.Controllers
                 Token = tokenResult.Token,
                 ExpiresAt = tokenResult.ExpiresAt,
                 TokenType = "Bearer",
-                User = new UserDto
-                {
-                    Id = user.Id,
-                    Username = user.Username,
-                    Email = user.Email,
-                    Role = user.Role,
-                    PhotoUrl = user.PhotoUrl
-                }
+                User = ToUserDto(user)
             };
 
             return ToApiValidationSuccess(response, "User registered successfully.");
@@ -266,12 +305,45 @@ namespace WebAPI.Controllers
                 Username = user.Username,
                 Role = user.Role,
                 PhotoUrl = user.PhotoUrl,
+                IsBanned = user.IsBanned && (user.BannedUntil == null || user.BannedUntil > DateTime.UtcNow),
+                BannedUntil = user.BannedUntil,
+                GradeLevel = user.GradeLevel,
+                SchoolYearStart = user.SchoolYearStart,
+                ScheduledDeletionAt = user.ScheduledDeletionAt,
                 ThreadsCount = _db.ForumThreads.Count(t => t.CreatedByUser.Id == user.Id),
                 PostsCount = _db.ForumPosts.Count(p => p.User.Id == user.Id && !p.IsDeleted),
                 PinsCount = _db.EventPins.Count(p => p.CreatedByUser.Id == user.Id)
             };
 
             return ToApiValidationSuccess(userDto);
+        }
+
+        private string? GetRemoteAddress()
+        {
+            var forwardedFor = HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(forwardedFor))
+            {
+                return forwardedFor.Split(',').FirstOrDefault()?.Trim();
+            }
+
+            return HttpContext.Connection.RemoteIpAddress?.ToString();
+        }
+
+        private static UserDto ToUserDto(User user)
+        {
+            return new UserDto
+            {
+                Id = user.Id,
+                Username = user.Username,
+                Email = user.Email,
+                Role = user.Role,
+                PhotoUrl = user.PhotoUrl,
+                IsBanned = user.IsBanned && (user.BannedUntil == null || user.BannedUntil > DateTime.UtcNow),
+                BannedUntil = user.BannedUntil,
+                GradeLevel = user.GradeLevel,
+                SchoolYearStart = user.SchoolYearStart,
+                ScheduledDeletionAt = user.ScheduledDeletionAt
+            };
         }
     }
 }

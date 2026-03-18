@@ -34,5 +34,12 @@ namespace Data.Models
         public DateTime? BannedUntil { get; set; }
         public string? BanReason { get; set; }
 
+        [Range(1, 12)]
+        public int? GradeLevel { get; set; }
+
+        public int? SchoolYearStart { get; set; }
+
+        public DateTime? ScheduledDeletionAt { get; set; }
+
     }
 }

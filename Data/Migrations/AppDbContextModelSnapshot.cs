@@ -344,6 +344,9 @@ namespace Data.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<int?>("GradeLevel")
+                        .HasColumnType("int");
+
                     b.Property<bool>("IsBanned")
                         .HasColumnType("bit");
 
@@ -361,12 +364,20 @@ namespace Data.Migrations
                     b.Property<int>("Role")
                         .HasColumnType("int");
 
+                    b.Property<DateTime?>("ScheduledDeletionAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("SchoolYearStart")
+                        .HasColumnType("int");
+
                     b.Property<string>("Username")
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ScheduledDeletionAt");
 
                     b.HasIndex("Username")
                         .IsUnique();

@@ -18,6 +18,10 @@ namespace Services.Dtos
         public required string Email { get; set; }
         [PasswordPolicy]
         public required string Password { get; set; }
+
+        [Range(1, 12)]
+        public int GradeLevel { get; set; }
+
         public string? PhotoUrl { get; set; }
     }
 }

@@ -116,7 +116,8 @@ namespace Services.Seeding
 
             for (var i = 1; i <= TargetCount - 2; i++)
             {
-                users.Add(CreateUser($"student{i:00}", $"student{i:00}@mg-events.com", Role.Student));
+                var gradeLevel = ((i - 1) % 12) + 1;
+                users.Add(CreateUser($"student{i:00}", $"student{i:00}@mg-events.com", Role.Student, gradeLevel));
             }
 
             return users;
@@ -324,8 +325,9 @@ namespace Services.Seeding
             return requests;
         }
 
-        private User CreateUser(string username, string email, Role role)
+        private User CreateUser(string username, string email, Role role, int? gradeLevel = null)
         {
+            var schoolYearStart = gradeLevel.HasValue ? DetermineSchoolYearStart(DateTime.UtcNow) : (int?)null;
             var user = new User
             {
                 Username = username,
@@ -333,11 +335,36 @@ namespace Services.Seeding
                 Role = role,
                 IsDeleted = false,
                 IsBanned = false,
-                PhotoUrl = null
+                PhotoUrl = null,
+                GradeLevel = gradeLevel,
+                SchoolYearStart = schoolYearStart,
+                ScheduledDeletionAt = gradeLevel.HasValue && schoolYearStart.HasValue
+                    ? CalculateScheduledDeletionUtc(gradeLevel.Value, schoolYearStart.Value)
+                    : null
             };
 
             user.PasswordHash = _passwordHasher.HashPassword(user, "Test123!");
             return user;
+        }
+
+        private static int DetermineSchoolYearStart(DateTime referenceUtc)
+        {
+            var boundary = new DateTime(referenceUtc.Year, 9, 15, 0, 0, 0, DateTimeKind.Utc);
+            return referenceUtc >= boundary ? referenceUtc.Year : referenceUtc.Year - 1;
+        }
+
+        private static DateTime CalculateScheduledDeletionUtc(int gradeLevel, int schoolYearStart)
+        {
+            var completionYear = schoolYearStart + 1;
+            var completionDate = gradeLevel switch
+            {
+                12 => new DateTime(completionYear, 5, 15, 0, 0, 0, DateTimeKind.Utc),
+                <= 3 => new DateTime(completionYear, 5, 29, 0, 0, 0, DateTimeKind.Utc),
+                <= 6 => new DateTime(completionYear, 6, 12, 0, 0, 0, DateTimeKind.Utc),
+                _ => new DateTime(completionYear, 6, 30, 0, 0, 0, DateTimeKind.Utc)
+            };
+
+            return completionDate.AddDays(1);
         }
     }
 }

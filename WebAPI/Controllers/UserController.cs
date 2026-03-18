@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Services.AuthUserService;
 using Services.Dtos;
 using WebAPI.Extensions;
+using WebAPI.Services.Accounts;
 
 namespace WebAPI.Controllers
 {
@@ -19,13 +20,20 @@ namespace WebAPI.Controllers
         private readonly IPasswordHasher<User> _passwordHasher;
         private readonly IAuthUserService _authUser;
         private readonly IWebHostEnvironment _env;
+        private readonly IUserLifecycleService _userLifecycleService;
 
-        public UserController(AppDbContext db, IPasswordHasher<User> passwordHasher, IAuthUserService authUser, IWebHostEnvironment env)
+        public UserController(
+            AppDbContext db,
+            IPasswordHasher<User> passwordHasher,
+            IAuthUserService authUser,
+            IWebHostEnvironment env,
+            IUserLifecycleService userLifecycleService)
         {
             _db = db;
             _passwordHasher = passwordHasher;
             _authUser = authUser;
             _env = env;
+            _userLifecycleService = userLifecycleService;
         }
 
         [Authorize(Roles = "Admin,Teacher")]
@@ -35,6 +43,47 @@ namespace WebAPI.Controllers
             var query = _db.Users.AsQueryable();
             if (_authUser.Role == Role.Teacher)
                 query = query.Where(u => u.Role == Role.Student);
+
+            var search = HttpContext.Request.Query["search"].ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                query = query.Where(u => u.Username.Contains(search) || u.Email.Contains(search));
+            }
+
+            var roleFilter = HttpContext.Request.Query["role"].ToString().Trim();
+            if (Enum.TryParse<Role>(roleFilter, true, out var parsedRole))
+            {
+                query = query.Where(u => u.Role == parsedRole);
+            }
+
+            var gradeLevelRaw = HttpContext.Request.Query["gradeLevel"].ToString().Trim();
+            if (int.TryParse(gradeLevelRaw, out var gradeLevel))
+            {
+                query = query.Where(u => u.GradeLevel == gradeLevel);
+            }
+
+            var accountState = HttpContext.Request.Query["accountState"].ToString().Trim().ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(accountState))
+            {
+                var now = DateTime.UtcNow;
+                query = accountState switch
+                {
+                    "banned" => query.Where(u => u.IsBanned && (u.BannedUntil == null || u.BannedUntil > now)),
+                    "active" => query.Where(u => !u.IsBanned || (u.BannedUntil != null && u.BannedUntil <= now)),
+                    "expiring" => query.Where(u => u.ScheduledDeletionAt != null && u.ScheduledDeletionAt <= now.AddDays(45)),
+                    "protected" => query.Where(u => u.Role == Role.Admin),
+                    _ => query
+                };
+            }
+
+            var sort = HttpContext.Request.Query["sort"].ToString().Trim().ToLowerInvariant();
+            query = sort switch
+            {
+                "role" => query.OrderBy(u => u.Role).ThenBy(u => u.Username),
+                "grade" => query.OrderBy(u => u.GradeLevel).ThenBy(u => u.Username),
+                "scheduleddeletion" => query.OrderBy(u => u.ScheduledDeletionAt).ThenBy(u => u.Username),
+                _ => query.OrderBy(u => u.Username)
+            };
 
             var totalCount = await query.CountAsync();
 
@@ -429,11 +478,18 @@ namespace WebAPI.Controllers
             if (user == null)
                 return ToApiValidationFail("User not found.", 404);
 
-            user.IsDeleted = true;
-            user.DeletedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync();
+            if (user.Role == Role.Admin)
+                return ToApiValidationFail("Admin accounts cannot be deleted.", 403);
 
-            return ToApiValidationSuccess("User deleted successfully.");
+            if (_authUser.Id == user.Id)
+                return ToApiValidationFail("You can't delete your own account from the admin dashboard.", 403);
+
+            var deletionSummary = await _userLifecycleService.DeleteUserWithContentAsync(user.Id);
+            if (deletionSummary == null)
+                return ToApiValidationFail("User not found.", 404);
+
+            return ToApiValidationSuccess(
+                $"User deleted successfully. Removed {deletionSummary.RemovedThreads} threads, {deletionSummary.RemovedPosts} standalone posts and {deletionSummary.RemovedPins} pins.");
         }
 
         private UserDto ToUserDto(User user, bool includeStats)
@@ -444,7 +500,12 @@ namespace WebAPI.Controllers
                 Username = user.Username,
                 Email = user.Email,
                 Role = user.Role,
-                PhotoUrl = user.PhotoUrl
+                PhotoUrl = user.PhotoUrl,
+                IsBanned = user.IsBanned && (user.BannedUntil == null || user.BannedUntil > DateTime.UtcNow),
+                BannedUntil = user.BannedUntil,
+                GradeLevel = user.GradeLevel,
+                SchoolYearStart = user.SchoolYearStart,
+                ScheduledDeletionAt = user.ScheduledDeletionAt
             };
 
             if (includeStats)

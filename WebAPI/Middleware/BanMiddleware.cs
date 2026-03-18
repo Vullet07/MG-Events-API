@@ -1,5 +1,8 @@
-﻿using Services.AuthUserService;
+using Data;
+using Microsoft.EntityFrameworkCore;
+using Services.AuthUserService;
 using WebAPI.Extensions;
+using WebAPI.Services.Accounts;
 
 namespace WebAPI.Middleware
 {
@@ -14,21 +17,38 @@ namespace WebAPI.Middleware
 
         public async Task InvokeAsync(
             HttpContext context,
-            IAuthUserService authUser)
+            IAuthUserService authUser,
+            AppDbContext db,
+            IUserLifecycleService userLifecycleService)
         {
-            // Only care about authenticated users
-            if (authUser.IsAuthenticated && authUser.IsBanned)
+            if (authUser.IsAuthenticated && authUser.Id.HasValue)
             {
-                context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                context.Response.ContentType = "application/json";
+                var user = await db.Users
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(u => u.Id == authUser.Id.Value);
 
-                var response = ApiResponse.Fail(
-                    authUser.BannedUntil != null
-                        ? $"You are banned until {authUser.BannedUntil:yyyy-MM-dd HH:mm}."
-                        : "You are permanently banned.");
+                if (user?.ScheduledDeletionAt != null && user.ScheduledDeletionAt <= DateTime.UtcNow)
+                {
+                    await userLifecycleService.DeleteUserWithContentAsync(user.Id);
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsJsonAsync(ApiResponse.Fail("Your student account expired and has been removed."));
+                    return;
+                }
 
-                await context.Response.WriteAsJsonAsync(response);
-                return;
+                if (authUser.IsBanned)
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    context.Response.ContentType = "application/json";
+
+                    var response = ApiResponse.Fail(
+                        authUser.BannedUntil != null
+                            ? $"You are banned until {authUser.BannedUntil:yyyy-MM-dd HH:mm}."
+                            : "You are permanently banned.");
+
+                    await context.Response.WriteAsJsonAsync(response);
+                    return;
+                }
             }
 
             await _next(context);

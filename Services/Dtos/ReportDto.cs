@@ -16,5 +16,8 @@ namespace Services.Dtos
         public string ReporterUsername { get; set; } = default!;
         public DateTime? ResolvedAt { get; set; }
         public int? ResolvedByUserId { get; set; }
+        public bool TargetExists { get; set; }
+        public string? ContextLabel { get; set; }
+        public string? PreviewPath { get; set; }
     }
 }

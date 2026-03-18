@@ -41,6 +41,9 @@ namespace Data
                 .HasIndex(u => u.Username)
                 .IsUnique();
 
+            modelBuilder.Entity<User>()
+                .HasIndex(u => u.ScheduledDeletionAt);
+
             modelBuilder.Entity<User>(entity =>
             {
                 entity.HasKey(u => u.Id);
@@ -48,6 +51,9 @@ namespace Data
                 entity.Property(u => u.PasswordHash).IsRequired();
                 entity.Property(u => u.Role).IsRequired();
                 entity.Property(u => u.PhotoUrl).HasMaxLength(500);
+                entity.Property(u => u.GradeLevel);
+                entity.Property(u => u.SchoolYearStart);
+                entity.Property(u => u.ScheduledDeletionAt);
             });
 
             modelBuilder.Entity<ForumThread>(entity =>

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Services.AuthUserService;
 using Services.Dtos;
 using WebAPI.Extensions;
+using WebAPI.Services.Accounts;
 
 namespace WebAPI.Controllers
 {
@@ -16,11 +17,16 @@ namespace WebAPI.Controllers
     {
         private readonly AppDbContext _db;
         private readonly IAuthUserService _authUser;
+        private readonly IUserLifecycleService _userLifecycleService;
 
-        public ReportsController(AppDbContext db, IAuthUserService authUser)
+        public ReportsController(
+            AppDbContext db,
+            IAuthUserService authUser,
+            IUserLifecycleService userLifecycleService)
         {
             _db = db;
             _authUser = authUser;
+            _userLifecycleService = userLifecycleService;
         }
 
         [HttpPost]
@@ -66,46 +72,14 @@ namespace WebAPI.Controllers
             if (!_authUser.Id.HasValue)
                 return ToApiValidationFail("User not authenticated.", 401);
 
-            var myReports = await _db.Reports
+            var reports = await _db.Reports
+                .Include(r => r.Reporter)
                 .Include(r => r.ResolvedBy)
                 .Where(r => r.Reporter.Id == _authUser.Id.Value)
                 .OrderByDescending(r => r.CreatedAt)
-                .Select(r => new ReportDto
-                {
-                    Id = r.Id,
-                    TargetType = r.TargetType,
-                    TargetId = r.TargetId,
-                    TargetLabel = r.TargetType == ReportTargetType.Thread
-                        ? _db.ForumThreads
-                            .Where(t => t.Id == r.TargetId)
-                            .Select(t => t.Title)
-                            .FirstOrDefault() ?? "Unknown thread"
-                        : r.TargetType == ReportTargetType.Post
-                            ? _db.ForumPosts
-                                .Where(p => p.Id == r.TargetId)
-                                .Select(p => p.Title ?? p.Content)
-                                .FirstOrDefault() ?? "Unknown post"
-                            : r.TargetType == ReportTargetType.Pin
-                                ? _db.EventPins
-                                    .Where(p => p.Id == r.TargetId)
-                                    .Select(p => p.Title)
-                                    .FirstOrDefault() ?? "Unknown pin"
-                                : _db.Users
-                                    .Where(u => u.Id == r.TargetId)
-                                    .Select(u => u.Username)
-                                    .FirstOrDefault() ?? "Unknown user",
-                    Reason = r.Reason,
-                    Details = r.Details,
-                    Status = r.Status,
-                    CreatedAt = r.CreatedAt,
-                    ReporterId = _authUser.Id.Value,
-                    ReporterUsername = _authUser.Username ?? "",
-                    ResolvedAt = r.ResolvedAt,
-                    ResolvedByUserId = r.ResolvedBy != null ? r.ResolvedBy.Id : null
-                })
                 .ToListAsync();
 
-            return ToApiValidationSuccess(myReports);
+            return ToApiValidationSuccess(await MapReportsAsync(reports));
         }
 
         [Authorize(Roles = "Admin")]
@@ -117,42 +91,9 @@ namespace WebAPI.Controllers
                 .Include(r => r.ResolvedBy)
                 .OrderBy(r => r.Status)
                 .ThenByDescending(r => r.CreatedAt)
-                .Select(r => new ReportDto
-                {
-                    Id = r.Id,
-                    TargetType = r.TargetType,
-                    TargetId = r.TargetId,
-                    TargetLabel = r.TargetType == ReportTargetType.Thread
-                        ? _db.ForumThreads
-                            .Where(t => t.Id == r.TargetId)
-                            .Select(t => t.Title)
-                            .FirstOrDefault() ?? "Unknown thread"
-                        : r.TargetType == ReportTargetType.Post
-                            ? _db.ForumPosts
-                                .Where(p => p.Id == r.TargetId)
-                                .Select(p => p.Title ?? p.Content)
-                                .FirstOrDefault() ?? "Unknown post"
-                            : r.TargetType == ReportTargetType.Pin
-                                ? _db.EventPins
-                                    .Where(p => p.Id == r.TargetId)
-                                    .Select(p => p.Title)
-                                    .FirstOrDefault() ?? "Unknown pin"
-                                : _db.Users
-                                    .Where(u => u.Id == r.TargetId)
-                                    .Select(u => u.Username)
-                                    .FirstOrDefault() ?? "Unknown user",
-                    Reason = r.Reason,
-                    Details = r.Details,
-                    Status = r.Status,
-                    CreatedAt = r.CreatedAt,
-                    ReporterId = r.Reporter.Id,
-                    ReporterUsername = r.Reporter.Username,
-                    ResolvedAt = r.ResolvedAt,
-                    ResolvedByUserId = r.ResolvedBy != null ? r.ResolvedBy.Id : null
-                })
                 .ToListAsync();
 
-            return ToApiValidationSuccess(reports);
+            return ToApiValidationSuccess(await MapReportsAsync(reports));
         }
 
         [Authorize(Roles = "Admin")]
@@ -166,8 +107,14 @@ namespace WebAPI.Controllers
             report.Status = dto.Status;
             report.ResolvedAt = dto.Status == ReportStatus.Open ? null : DateTime.UtcNow;
 
-            if (_authUser.Id.HasValue)
+            if (dto.Status == ReportStatus.Open)
+            {
+                report.ResolvedBy = null;
+            }
+            else if (_authUser.Id.HasValue)
+            {
                 report.ResolvedBy = await _db.Users.FindAsync(_authUser.Id.Value);
+            }
 
             await _db.SaveChangesAsync();
             return ToApiValidationSuccess("Report status updated.");
@@ -188,6 +135,7 @@ namespace WebAPI.Controllers
                     var post = await _db.ForumPosts.FirstOrDefaultAsync(p => p.Id == report.TargetId);
                     if (post == null)
                         return ToApiValidationFail("Reported post not found.", 404);
+
                     post.IsDeleted = true;
                     post.UpdatedAt = DateTime.UtcNow;
                     message = "Reported post deleted.";
@@ -197,6 +145,7 @@ namespace WebAPI.Controllers
                     var thread = await _db.ForumThreads.FirstOrDefaultAsync(t => t.Id == report.TargetId);
                     if (thread == null)
                         return ToApiValidationFail("Reported thread not found.", 404);
+
                     _db.ForumThreads.Remove(thread);
                     message = "Reported thread deleted.";
                     break;
@@ -205,20 +154,19 @@ namespace WebAPI.Controllers
                     var pin = await _db.EventPins.FirstOrDefaultAsync(p => p.Id == report.TargetId);
                     if (pin == null)
                         return ToApiValidationFail("Reported pin not found.", 404);
+
                     _db.EventPins.Remove(pin);
                     message = "Reported pin deleted.";
                     break;
 
                 case ReportTargetType.User:
-                    var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == report.TargetId);
+                    var user = await _db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == report.TargetId);
                     if (user == null)
                         return ToApiValidationFail("Reported user not found.", 404);
                     if (user.Role == Role.Admin)
                         return ToApiValidationFail("Admin accounts cannot be deleted from reports.", 403);
-                    user.IsDeleted = true;
-                    user.DeletedAt = DateTime.UtcNow;
-                    user.IsBanned = true;
-                    user.BannedUntil = null;
+
+                    await _userLifecycleService.DeleteUserWithContentAsync(user.Id);
                     message = "Reported user deleted.";
                     break;
 
@@ -226,13 +174,189 @@ namespace WebAPI.Controllers
                     return ToApiValidationFail("Unsupported report target.", 400);
             }
 
-            report.Status = ReportStatus.Actioned;
-            report.ResolvedAt = DateTime.UtcNow;
+            await MarkReportsForTargetAsync(report.TargetType, report.TargetId, ReportStatus.Actioned);
+            return ToApiValidationSuccess(message);
+        }
+
+        private async Task MarkReportsForTargetAsync(ReportTargetType targetType, int targetId, ReportStatus nextStatus)
+        {
+            var relatedReports = await _db.Reports
+                .Where(r => r.TargetType == targetType && r.TargetId == targetId)
+                .ToListAsync();
+
+            User? actingUser = null;
             if (_authUser.Id.HasValue)
-                report.ResolvedBy = await _db.Users.FindAsync(_authUser.Id.Value);
+            {
+                actingUser = await _db.Users.FindAsync(_authUser.Id.Value);
+            }
+
+            foreach (var report in relatedReports)
+            {
+                report.Status = nextStatus;
+                report.ResolvedAt = nextStatus == ReportStatus.Open ? null : DateTime.UtcNow;
+                report.ResolvedBy = nextStatus == ReportStatus.Open ? null : actingUser;
+            }
 
             await _db.SaveChangesAsync();
-            return ToApiValidationSuccess(message);
+        }
+
+        private async Task<List<ReportDto>> MapReportsAsync(List<Report> reports)
+        {
+            var threadIds = reports
+                .Where(r => r.TargetType == ReportTargetType.Thread)
+                .Select(r => r.TargetId)
+                .Distinct()
+                .ToList();
+
+            var postIds = reports
+                .Where(r => r.TargetType == ReportTargetType.Post)
+                .Select(r => r.TargetId)
+                .Distinct()
+                .ToList();
+
+            var pinIds = reports
+                .Where(r => r.TargetType == ReportTargetType.Pin)
+                .Select(r => r.TargetId)
+                .Distinct()
+                .ToList();
+
+            var userIds = reports
+                .Where(r => r.TargetType == ReportTargetType.User)
+                .Select(r => r.TargetId)
+                .Distinct()
+                .ToList();
+
+            var threads = threadIds.Count == 0
+                ? new Dictionary<int, (string Title, bool Exists)>()
+                : await _db.ForumThreads
+                    .Where(t => threadIds.Contains(t.Id))
+                    .Select(t => new { t.Id, t.Title })
+                    .ToDictionaryAsync(
+                        t => t.Id,
+                        t => (t.Title, true));
+
+            var posts = postIds.Count == 0
+                ? new Dictionary<int, (string Label, int ThreadId, string ThreadTitle, bool Exists)>()
+                : await _db.ForumPosts
+                    .Where(p => postIds.Contains(p.Id))
+                    .Select(p => new
+                    {
+                        p.Id,
+                        Label = p.Title ?? p.Content,
+                        ThreadId = EF.Property<int>(p, "ThreadId"),
+                        ThreadTitle = p.Thread.Title
+                    })
+                    .ToDictionaryAsync(
+                        p => p.Id,
+                        p => (p.Label, p.ThreadId, p.ThreadTitle, true));
+
+            var pins = pinIds.Count == 0
+                ? new Dictionary<int, (string Title, bool Exists)>()
+                : await _db.EventPins
+                    .Where(p => pinIds.Contains(p.Id))
+                    .Select(p => new { p.Id, p.Title })
+                    .ToDictionaryAsync(
+                        p => p.Id,
+                        p => (p.Title, true));
+
+            var users = userIds.Count == 0
+                ? new Dictionary<int, (string Username, Role Role, bool Exists)>()
+                : await _db.Users
+                    .IgnoreQueryFilters()
+                    .Where(u => userIds.Contains(u.Id))
+                    .Select(u => new { u.Id, u.Username, u.Role })
+                    .ToDictionaryAsync(
+                        u => u.Id,
+                        u => (u.Username, u.Role, true));
+
+            var mapped = new List<ReportDto>(reports.Count);
+            foreach (var report in reports)
+            {
+                var dto = new ReportDto
+                {
+                    Id = report.Id,
+                    TargetType = report.TargetType,
+                    TargetId = report.TargetId,
+                    Reason = report.Reason,
+                    Details = report.Details,
+                    Status = report.Status,
+                    CreatedAt = report.CreatedAt,
+                    ReporterId = report.Reporter?.Id ?? 0,
+                    ReporterUsername = report.Reporter?.Username ?? "Unknown reporter",
+                    ResolvedAt = report.ResolvedAt,
+                    ResolvedByUserId = report.ResolvedBy?.Id
+                };
+
+                switch (report.TargetType)
+                {
+                    case ReportTargetType.Thread:
+                        if (threads.TryGetValue(report.TargetId, out var threadInfo))
+                        {
+                            dto.TargetExists = threadInfo.Item2;
+                            dto.TargetLabel = threadInfo.Item1;
+                            dto.PreviewPath = $"/threads/{report.TargetId}";
+                        }
+                        else
+                        {
+                            dto.TargetExists = false;
+                            dto.TargetLabel = "Deleted thread";
+                        }
+                        break;
+
+                    case ReportTargetType.Post:
+                        if (posts.TryGetValue(report.TargetId, out var postInfo))
+                        {
+                            dto.TargetExists = postInfo.Item4;
+                            dto.TargetLabel = postInfo.Item1;
+                            dto.ContextLabel = $"Thread: {postInfo.Item3}";
+                            dto.PreviewPath = $"/threads/{postInfo.Item2}?postId={report.TargetId}";
+                        }
+                        else
+                        {
+                            dto.TargetExists = false;
+                            dto.TargetLabel = "Deleted post";
+                        }
+                        break;
+
+                    case ReportTargetType.Pin:
+                        if (pins.TryGetValue(report.TargetId, out var pinInfo))
+                        {
+                            dto.TargetExists = pinInfo.Item2;
+                            dto.TargetLabel = pinInfo.Item1;
+                            dto.PreviewPath = $"/map?pinId={report.TargetId}";
+                        }
+                        else
+                        {
+                            dto.TargetExists = false;
+                            dto.TargetLabel = "Deleted marker";
+                        }
+                        break;
+
+                    case ReportTargetType.User:
+                        if (users.TryGetValue(report.TargetId, out var userInfo))
+                        {
+                            dto.TargetExists = userInfo.Item3;
+                            dto.TargetLabel = userInfo.Item1;
+                            dto.ContextLabel = $"Role: {userInfo.Item2}";
+                            dto.PreviewPath = $"/users/{report.TargetId}";
+                        }
+                        else
+                        {
+                            dto.TargetExists = false;
+                            dto.TargetLabel = "Deleted user";
+                        }
+                        break;
+
+                    default:
+                        dto.TargetExists = false;
+                        dto.TargetLabel = "Unknown target";
+                        break;
+                }
+
+                mapped.Add(dto);
+            }
+
+            return mapped;
         }
     }
 }

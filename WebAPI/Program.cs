@@ -16,6 +16,8 @@ using System.Text;
 using System.Text.Json.Serialization;
 using WebAPI.Controllers;
 using WebAPI.Middleware;
+using WebAPI.Services.Accounts;
+using WebAPI.Services.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -66,7 +68,8 @@ builder.Services.AddDbContext<AppDbContext>(opts =>
 
 // Jwt settings
 
-var jwtSettings = builder.Configuration.GetSection("Jwt").Get<JwtSettings>();
+var jwtSettings = builder.Configuration.GetSection("Jwt").Get<JwtSettings>()
+    ?? throw new InvalidOperationException("Missing Jwt configuration.");
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
 
 // Authentication
@@ -143,12 +146,15 @@ builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<IAuthUserService, AuthUserService>();
 builder.Services.AddScoped<IDataSeeder, DataSeeder>();
+builder.Services.AddScoped<IUserLifecycleService, UserLifecycleService>();
+builder.Services.AddSingleton<ILoginAttemptQuarantineService, LoginAttemptQuarantineService>();
 
 // Other services
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddAuthorization();
 builder.Services.AddMemoryCache();
+builder.Services.AddHostedService<ExpiredStudentCleanupHostedService>();
 
 var app = builder.Build();
 
