@@ -166,8 +166,17 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
     app.MapOpenApi();
     using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var seeder = scope.ServiceProvider.GetRequiredService<IDataSeeder>();
-    await seeder.SeedAsync();
+    var forceReseed =
+        builder.Configuration.GetValue<bool>("Seeding:ForceReseedOnStartup") ||
+        string.Equals(Environment.GetEnvironmentVariable("MG_EVENTS_FORCE_RESEED"), "1", StringComparison.OrdinalIgnoreCase);
+
+    var hasUsers = await db.Users.IgnoreQueryFilters().AnyAsync();
+    if (forceReseed || !hasUsers)
+    {
+        await seeder.SeedAsync();
+    }
 
 }
 

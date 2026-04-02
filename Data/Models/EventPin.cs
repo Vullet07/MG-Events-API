@@ -13,6 +13,10 @@ namespace Data.Models
 
         public string? Description { get; set; }
 
+        [Required]
+        [MaxLength(80)]
+        public string Category { get; set; } = default!;
+
         public double Latitude { get; set; }
 
         public double Longitude { get; set; }

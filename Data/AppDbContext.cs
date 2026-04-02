@@ -97,6 +97,7 @@ namespace Data
             {
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Title).IsRequired();
+                entity.Property(e => e.Category).IsRequired().HasMaxLength(80);
 
                 entity.HasOne(e => e.CreatedByUser)
                       .WithMany()

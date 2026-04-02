@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Services.AuthUserService;
 using Services.Dtos;
+using Services.Maps;
 using WebAPI.Extensions;
 using WebAPI.Services.Accounts;
 
@@ -227,23 +228,38 @@ namespace WebAPI.Controllers
                 .OrderByDescending(p => p.CreatedAt)
                 .Skip(paging.Skip)
                 .Take(paging.PageSize)
-                .Select(p => new PublicUserPinItemDto
+                .Select(p => new
                 {
-                    PinId = p.Id,
-                    Title = p.Title,
-                    Description = p.Description,
-                    PhotoUrl = p.PhotoUrl,
-                    Latitude = p.Latitude,
-                    Longitude = p.Longitude,
-                    CreatedAt = p.CreatedAt,
+                    Pin = p,
                     Upvotes = _db.PinVotes.Count(v => v.Pin.Id == p.Id && v.Value == VoteValue.Up),
                     Downvotes = _db.PinVotes.Count(v => v.Pin.Id == p.Id && v.Value == VoteValue.Down)
                 })
                 .ToListAsync();
 
+            var mappedItems = items.Select(item =>
+            {
+                IndoorMapGeometry.TryResolveZone(item.Pin.Latitude, item.Pin.Longitude, out var zone);
+
+                return new PublicUserPinItemDto
+                {
+                    PinId = item.Pin.Id,
+                    Title = item.Pin.Title,
+                    Description = item.Pin.Description,
+                    Category = item.Pin.Category,
+                    PhotoUrl = item.Pin.PhotoUrl,
+                    Latitude = item.Pin.Latitude,
+                    Longitude = item.Pin.Longitude,
+                    LayerLabel = zone?.LayerLabel ?? "Неизвестен слой",
+                    ZoneLabel = zone?.ZoneLabel ?? "Неизвестна зона",
+                    CreatedAt = item.Pin.CreatedAt,
+                    Upvotes = item.Upvotes,
+                    Downvotes = item.Downvotes
+                };
+            }).ToList();
+
             return ToApiValidationSuccess(new PagedResponse<PublicUserPinItemDto>
             {
-                Items = items,
+                Items = mappedItems,
                 Page = paging.Page,
                 PageSize = paging.PageSize,
                 TotalCount = totalCount

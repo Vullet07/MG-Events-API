@@ -2,12 +2,11 @@ using Microsoft.AspNetCore.Http;
 
 namespace WebAPI.Models
 {
-    public class CreateForumPostForm
+    public class UpdateForumPostForm
     {
         public string? Title { get; set; }
         public string? Content { get; set; }
-        public int ThreadId { get; set; }
-        public int? ParentPostId { get; set; }
         public IFormFile? Photo { get; set; }
+        public bool RemovePhoto { get; set; }
     }
 }

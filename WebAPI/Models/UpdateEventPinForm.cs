@@ -2,13 +2,12 @@ using Microsoft.AspNetCore.Http;
 
 namespace WebAPI.Models
 {
-    public class CreateEventPinForm
+    public class UpdateEventPinForm
     {
         public string Title { get; set; } = default!;
         public string? Description { get; set; }
         public string Category { get; set; } = default!;
-        public double Latitude { get; set; }
-        public double Longitude { get; set; }
         public IFormFile? Photo { get; set; }
+        public bool RemovePhoto { get; set; }
     }
 }

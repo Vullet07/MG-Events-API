@@ -9,7 +9,7 @@ namespace Services.Dtos
     public class CreateForumPostDto
     {
         public string? Title { get; set; }
-        public string Content { get; set; } = default!;
+        public string? Content { get; set; }
         public int ThreadId { get; set; }
         public int? ParentPostId { get; set; }
     }

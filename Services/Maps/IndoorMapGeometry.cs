@@ -2,7 +2,12 @@ using System.Globalization;
 
 namespace Services.Maps
 {
-    public sealed record ResolvedMapZone(string LayerId, string ZoneId, string ZoneKind);
+    public sealed record ResolvedMapZone(
+        string LayerId,
+        string LayerLabel,
+        string ZoneId,
+        string ZoneLabel,
+        string ZoneKind);
 
     public static class IndoorMapGeometry
     {
@@ -262,7 +267,12 @@ namespace Services.Maps
                 var zone = zones.FirstOrDefault(item => Contains(item, x, y));
                 if (zone is not null)
                 {
-                    return new ResolvedMapZone(layerId, zone.Id, zone.Kind);
+                    return new ResolvedMapZone(
+                        layerId,
+                        GetLayerLabel(layerId),
+                        zone.Id,
+                        GetZoneLabel(layerId, zone.Id, zone.Kind),
+                        zone.Kind);
                 }
             }
 
@@ -279,15 +289,96 @@ namespace Services.Maps
 
             if (parts[0] == "main" && MainHullPolygons.TryGetValue(floor, out var polygon) && PointInPolygon(x, y, polygon))
             {
-                return new ResolvedMapZone(layerId, $"COR-FALLBACK-{layerId}", "zone");
+                return new ResolvedMapZone(
+                    layerId,
+                    GetLayerLabel(layerId),
+                    $"COR-FALLBACK-{layerId}",
+                    "Коридор",
+                    "zone");
             }
 
             if (parts[0] == "small" && Contains(SmallHull, x, y))
             {
-                return new ResolvedMapZone(layerId, $"COR-FALLBACK-{layerId}", "zone");
+                return new ResolvedMapZone(
+                    layerId,
+                    GetLayerLabel(layerId),
+                    $"COR-FALLBACK-{layerId}",
+                    "Коридор",
+                    "zone");
             }
 
             return null;
+        }
+
+        public static string GetLayerLabel(string layerId)
+        {
+            return layerId switch
+            {
+                "campus" => "Кампус · МГ \"Академик Кирил Попов\" - Пловдив",
+                "main:1" => "Голяма сграда · Етаж 1",
+                "main:2" => "Голяма сграда · Етаж 2",
+                "main:3" => "Голяма сграда · Етаж 3",
+                "main:4" => "Голяма сграда · Етаж 4",
+                "small:1" => "Малка сграда · Етаж 1",
+                "small:2" => "Малка сграда · Етаж 2",
+                "small:3" => "Малка сграда · Етаж 3",
+                _ => layerId
+            };
+        }
+
+        public static string GetZoneLabel(string layerId, string zoneId, string zoneKind)
+        {
+            if (string.IsNullOrWhiteSpace(zoneId))
+            {
+                return zoneKind == "zone" ? "Коридор" : "Зона";
+            }
+
+            if (zoneId.StartsWith("COR-FALLBACK-", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Коридор";
+            }
+
+            if (zoneId.StartsWith("WC-", StringComparison.OrdinalIgnoreCase))
+            {
+                return zoneId.Contains('W', StringComparison.OrdinalIgnoreCase) ? "Тоалетна - жени" : "Тоалетна - мъже";
+            }
+
+            return zoneId switch
+            {
+                "MED" => "Лекарски кабинет",
+                "FVS1" => "ФВС салон 1",
+                "FVS1-M" => "Съблекалня - мъже",
+                "FVS1-W" => "Съблекалня - жени",
+                "FVS2" => "ФВС салон 2",
+                "DINING" => "Столова",
+                "LOBBY" => "Лоби",
+                "STAIR-1A" or "STAIR-2A" or "STAIR-2B" or "STAIR-3B" or "STAIR-4B" or "STAIR-S1" or "STAIR-S2" or "STAIR-S3" => "Стълбище",
+                "LIB" => "Библиотека",
+                "SEC" => "Секретариат",
+                "HIST" => "Клуб на историка",
+                "LABP" => "Лаборатория по програмиране",
+                "PHY" => "Лаборатория по физика",
+                "BIO" => "Лаборатория по биология",
+                "CHEM" => "Лаборатория по химия",
+                "SERV" => "Обслужващ персонал",
+                "TECH" => "Технологии и роботика",
+                "RESEARCH" => "Изследвания и проучвания",
+                "main-block-north" or "main-block-west" or "main-block-center" or "main-block-gym" or "main-block-south" => "Голяма сграда",
+                "small-building" => "Малка сграда",
+                "court" => "Голямо игрище",
+                "parking" => "Югоизточен двор",
+                "north-walk" => "Северна алея",
+                "west-garden" => "Западен двор",
+                "north-garden" => "Северна зелена зона",
+                "east-garden" => "Източна зелена зона",
+                "south-east-garden" => "Югоизточна зелена зона",
+                "south-garden" => "Южен двор",
+                "east-border" => "Източна алея",
+                "south-walk" => "Южна алея",
+                _ when zoneId.All(char.IsDigit) => zoneId,
+                _ when zoneId.StartsWith("OPEN-", StringComparison.OrdinalIgnoreCase) => "Обща зона",
+                _ => zoneId
+            };
         }
 
         private static bool Contains(ZoneDef zone, double x, double y) => x >= zone.X && x <= zone.X + zone.Width && y >= zone.Y && y <= zone.Y + zone.Height;
