@@ -1,6 +1,4 @@
-using System;
-
-namespace Services.Dtos
+﻿namespace Services.Dtos
 {
     public class EventPinDto
     {
@@ -14,6 +12,14 @@ namespace Services.Dtos
         public DateTime CreatedAt { get; set; }
         public int CreatedByUserId { get; set; }
         public string CreatedByUsername { get; set; } = default!;
+        public bool IsResolved { get; set; }
+        public DateTime? ResolvedAt { get; set; }
+        public int? ResolvedByUserId { get; set; }
+        public string? ResolvedByUsername { get; set; }
+        public DateTime? ArchivedAt { get; set; }
+        public int ResolveConfirmationCount { get; set; }
+        public int ResolveThreshold { get; set; }
+        public bool HasCurrentUserResolveConfirmation { get; set; }
         public string LayerId { get; set; } = default!;
         public string LayerLabel { get; set; } = default!;
         public string ZoneId { get; set; } = default!;

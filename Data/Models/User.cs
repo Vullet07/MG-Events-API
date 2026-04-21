@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace Data.Models
 {
@@ -34,12 +29,16 @@ namespace Data.Models
         public DateTime? BannedUntil { get; set; }
         public string? BanReason { get; set; }
 
+        public bool IsEmailConfirmed { get; set; }
+        public string? EmailConfirmationTokenHash { get; set; }
+        public DateTime? EmailConfirmationTokenExpiresAt { get; set; }
+        public DateTime? EmailConfirmedAt { get; set; }
+
         [Range(1, 12)]
         public int? GradeLevel { get; set; }
 
         public int? SchoolYearStart { get; set; }
 
         public DateTime? ScheduledDeletionAt { get; set; }
-
     }
 }

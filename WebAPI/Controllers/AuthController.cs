@@ -1,7 +1,6 @@
 ﻿using Data;
 using Data.Models;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -20,7 +19,9 @@ namespace WebAPI.Controllers
     [Route("api/[controller]")]
     public class AuthController : ApiControllerBase
     {
-        private readonly string _backendBaseUrl;
+        private static readonly TimeSpan EmailConfirmationLifetime = TimeSpan.FromHours(24);
+
+        private readonly string _frontendBaseUrl;
         private readonly ITokenService _tokenService;
         private readonly IPasswordHasher<User> _passwordHasher;
         private readonly IAuthUserService _authUserService;
@@ -39,7 +40,7 @@ namespace WebAPI.Controllers
             ILoginAttemptQuarantineService loginAttemptQuarantineService,
             AppDbContext db)
         {
-            _backendBaseUrl = configuration["Backend:BaseUrl"]!;
+            _frontendBaseUrl = (configuration["Frontend:BaseUrl"] ?? configuration["Backend:BaseUrl"] ?? "http://localhost:5173").TrimEnd('/');
             _tokenService = tokenService;
             _passwordHasher = passwordHasher;
             _authUserService = authUserService;
@@ -49,9 +50,6 @@ namespace WebAPI.Controllers
             _db = db;
         }
 
-
-
-        // ---------------- LOGIN ----------------
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDto dto)
         {
@@ -67,9 +65,11 @@ namespace WebAPI.Controllers
                     429);
             }
 
-            // Find user by username OR email
+            var identifier = dto.Identifier.Trim();
+            var normalizedIdentifier = NormalizeEmail(identifier);
+
             var user = await _db.Users
-                .FirstOrDefaultAsync(u => u.Username == dto.Identifier || u.Email == dto.Identifier);
+                .FirstOrDefaultAsync(u => u.Username == identifier || u.Email == normalizedIdentifier);
 
             if (user == null)
             {
@@ -90,20 +90,17 @@ namespace WebAPI.Controllers
                 return ToApiValidationFail("Student account expired and has been removed.", 403);
             }
 
-            // Check if user is banned
             if (user.IsBanned)
             {
                 if (user.BannedUntil == null || user.BannedUntil > DateTime.UtcNow)
                     return ToApiValidationFail("Account is banned", 403);
 
-                // Lift ban if expired
                 user.IsBanned = false;
                 user.BannedUntil = null;
                 user.BanReason = null;
                 await _db.SaveChangesAsync();
             }
 
-            // Verify password
             var passwordValid = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash ?? string.Empty, dto.Password);
             if (passwordValid == PasswordVerificationResult.Failed)
             {
@@ -118,9 +115,13 @@ namespace WebAPI.Controllers
                 return ToApiValidationFail("Invalid credentials", 401);
             }
 
+            if (!user.IsEmailConfirmed)
+            {
+                return ToApiValidationFail("Имейл адресът не е потвърден. Провери пощата си и активирай профила.", 403);
+            }
+
             _loginAttemptQuarantineService.ClearFailures(remoteAddress);
 
-            // Generate JWT
             var tokenResult = _tokenService.GenerateToken(user.Id.ToString(), user.Role.ToString(), user.Username);
 
             var response = new LoginResponseDto
@@ -133,49 +134,49 @@ namespace WebAPI.Controllers
             return ToApiValidationSuccess(response, "Login successful");
         }
 
-
-        // ---------------- REGISTER ----------------
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] CreateUserDto dto)
         {
             if (!ModelState.IsValid)
                 return ToApiValidationFail("Invalid registration data.");
 
-            if (await _db.Users.AnyAsync(u => u.Username == dto.Username))
+            var username = dto.Username.Trim();
+            var email = NormalizeEmail(dto.Email);
+
+            if (await _db.Users.AnyAsync(u => u.Username == username))
                 return ToApiValidationFail("Username already exists.", 409);
 
-            if (await _db.Users.AnyAsync(u => u.Email == dto.Email))
+            if (await _db.Users.AnyAsync(u => u.Email == email))
                 return ToApiValidationFail("Email already registered.");
+
+            var confirmationToken = EmailConfirmationTokenHelper.GenerateToken();
 
             var user = new User
             {
-                Username = dto.Username,
-                Email = dto.Email,
+                Username = username,
+                Email = email,
                 Role = Role.Student,
                 PhotoUrl = dto.PhotoUrl,
                 GradeLevel = dto.GradeLevel,
                 SchoolYearStart = _userLifecycleService.DetermineSchoolYearStart(),
-                ScheduledDeletionAt = _userLifecycleService.CalculateScheduledDeletionUtc(dto.GradeLevel)
+                ScheduledDeletionAt = _userLifecycleService.CalculateScheduledDeletionUtc(dto.GradeLevel),
+                IsEmailConfirmed = false,
+                EmailConfirmationTokenHash = EmailConfirmationTokenHelper.HashToken(confirmationToken),
+                EmailConfirmationTokenExpiresAt = DateTime.UtcNow.Add(EmailConfirmationLifetime),
+                EmailConfirmedAt = null
             };
             user.PasswordHash = _passwordHasher.HashPassword(user, dto.Password);
 
             _db.Users.Add(user);
             await _db.SaveChangesAsync();
 
-            var tokenResult = _tokenService.GenerateToken(
-                user.Id.ToString(),
-                user.Role.ToString(),
-                user.Username);
+            var confirmUrl = BuildConfirmEmailUrl("student", confirmationToken);
+            await _emailService.SendAsync(
+                user.Email,
+                "Активирай профила си в MG Events",
+                $"<p>Здравей, {user.Username}!</p><p>За да активираш ученическия си профил в MG Events за МГ &bdquo;Академик Кирил Попов&ldquo;, натисни <a href='{confirmUrl}'>този линк</a>.</p><p>Линкът е валиден 24 часа.</p>");
 
-            var response = new LoginResponseDto
-            {
-                Token = tokenResult.Token,
-                ExpiresAt = tokenResult.ExpiresAt,
-                TokenType = "Bearer",
-                User = ToUserDto(user)
-            };
-
-            return ToApiValidationSuccess(response, "User registered successfully.");
+            return ToApiValidationSuccess("Регистрацията е записана. Провери имейла си и активирай профила, за да можеш да влезеш.");
         }
 
         [HttpPost("register-teacher-request")]
@@ -185,52 +186,127 @@ namespace WebAPI.Controllers
             if (!ModelState.IsValid)
                 return ToApiValidationFail("Invalid teacher registration data.");
 
-            if (await _db.Users.AnyAsync(u => u.Username == dto.Username))
+            var username = dto.Username.Trim();
+            var email = NormalizeEmail(dto.Email);
+
+            if (await _db.Users.AnyAsync(u => u.Username == username))
                 return ToApiValidationFail("Username already exists.", 409);
 
-            if (await _db.Users.AnyAsync(u => u.Email == dto.Email))
+            if (await _db.Users.AnyAsync(u => u.Email == email))
                 return ToApiValidationFail("Email already registered.", 409);
 
             var duplicatePending = await _db.TeacherRegistrationRequests.AnyAsync(r =>
                 r.Status == TeacherRegistrationStatus.Pending &&
-                (r.Username == dto.Username || r.Email == dto.Email));
+                (r.Username == username || r.Email == email));
 
             if (duplicatePending)
                 return ToApiValidationFail("A pending teacher request with this username or email already exists.", 409);
 
             var teacherCandidate = new User
             {
-                Username = dto.Username,
-                Email = dto.Email,
+                Username = username,
+                Email = email,
                 Role = Role.Teacher
             };
 
+            var confirmationToken = EmailConfirmationTokenHelper.GenerateToken();
+
             var request = new TeacherRegistrationRequest
             {
-                Username = dto.Username,
-                Email = dto.Email,
+                Username = username,
+                Email = email,
                 PasswordHash = _passwordHasher.HashPassword(teacherCandidate, dto.Password),
                 Motivation = dto.Motivation?.Trim(),
-                Status = TeacherRegistrationStatus.Pending
+                Status = TeacherRegistrationStatus.Pending,
+                IsEmailConfirmed = false,
+                EmailConfirmationTokenHash = EmailConfirmationTokenHelper.HashToken(confirmationToken),
+                EmailConfirmationTokenExpiresAt = DateTime.UtcNow.Add(EmailConfirmationLifetime),
+                EmailConfirmedAt = null
             };
 
             _db.TeacherRegistrationRequests.Add(request);
             await _db.SaveChangesAsync();
 
-            return ToApiValidationSuccess("Teacher registration request submitted. An admin must approve it.");
+            var confirmUrl = BuildConfirmEmailUrl("teacher", confirmationToken);
+            await _emailService.SendAsync(
+                request.Email,
+                "Потвърди учителската си заявка в MG Events",
+                $"<p>Здравей, {request.Username}!</p><p>За да потвърдиш имейла към учителската си заявка в MG Events за МГ &bdquo;Академик Кирил Попов&ldquo;, отвори <a href='{confirmUrl}'>този линк</a>.</p><p>След потвърждение заявката ти ще чака преглед от администратор.</p>");
+
+            return ToApiValidationSuccess("Заявката е записана. Потвърди имейла си, след което тя ще чака одобрение от администратор.");
+        }
+
+        [HttpPost("confirm-email")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ConfirmEmail([FromBody] ConfirmEmailDto dto)
+        {
+            if (!ModelState.IsValid)
+                return ToApiValidationFail("Missing confirmation data.");
+
+            var kind = dto.Kind.Trim().ToLowerInvariant();
+            var tokenHash = EmailConfirmationTokenHelper.HashToken(dto.Token.Trim());
+            var now = DateTime.UtcNow;
+
+            if (kind is "student" or "user")
+            {
+                var user = await _db.Users
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(u =>
+                        !u.IsDeleted &&
+                        !u.IsEmailConfirmed &&
+                        u.EmailConfirmationTokenHash == tokenHash &&
+                        u.EmailConfirmationTokenExpiresAt != null &&
+                        u.EmailConfirmationTokenExpiresAt > now);
+
+                if (user == null)
+                    return ToApiValidationFail("Невалиден или изтекъл линк за потвърждение.", 400);
+
+                user.IsEmailConfirmed = true;
+                user.EmailConfirmedAt = now;
+                user.EmailConfirmationTokenHash = null;
+                user.EmailConfirmationTokenExpiresAt = null;
+                await _db.SaveChangesAsync();
+
+                return ToApiValidationSuccess("Имейлът е потвърден успешно. Вече можеш да влезеш в профила си.");
+            }
+
+            if (kind == "teacher")
+            {
+                var request = await _db.TeacherRegistrationRequests
+                    .FirstOrDefaultAsync(r =>
+                        r.Status == TeacherRegistrationStatus.Pending &&
+                        !r.IsEmailConfirmed &&
+                        r.EmailConfirmationTokenHash == tokenHash &&
+                        r.EmailConfirmationTokenExpiresAt != null &&
+                        r.EmailConfirmationTokenExpiresAt > now);
+
+                if (request == null)
+                    return ToApiValidationFail("Невалиден или изтекъл линк за потвърждение.", 400);
+
+                request.IsEmailConfirmed = true;
+                request.EmailConfirmedAt = now;
+                request.EmailConfirmationTokenHash = null;
+                request.EmailConfirmationTokenExpiresAt = null;
+                await _db.SaveChangesAsync();
+
+                return ToApiValidationSuccess("Имейлът е потвърден успешно. Учителската заявка вече очаква преглед от администратор.");
+            }
+
+            return ToApiValidationFail("Невалиден тип за потвърждение.", 400);
         }
 
         [HttpPost("forgot-password")]
         [AllowAnonymous]
         public async Task<IActionResult> ForgotPassword(ForgotPasswordDto dto)
         {
+            var normalizedEmail = NormalizeEmail(dto.Email);
             var user = await _db.Users
                 .FirstOrDefaultAsync(u =>
-                    u.Email == dto.Email &&
+                    u.Email == normalizedEmail &&
                     !u.IsDeleted &&
-                    !u.IsBanned);
+                    !u.IsBanned &&
+                    u.IsEmailConfirmed);
 
-            // Prevent user enumeration
             if (user == null)
                 return ToApiValidationSuccess("If the email exists, a reset link was sent.");
 
@@ -247,7 +323,7 @@ namespace WebAPI.Controllers
             await _db.SaveChangesAsync();
 
             var resetUrl =
-                $"{_backendBaseUrl}/reset-password?token={Uri.EscapeDataString(token)}";
+                $"{_frontendBaseUrl}/reset-password?token={Uri.EscapeDataString(token)}";
 
             await _emailService.SendAsync(
                 user.Email,
@@ -286,7 +362,6 @@ namespace WebAPI.Controllers
             return ToApiValidationSuccess("Password reset successfully.");
         }
 
-        // ---------------- ME ----------------
         [Authorize]
         [HttpGet("me")]
         public IActionResult Me()
@@ -298,22 +373,10 @@ namespace WebAPI.Controllers
             if (user == null)
                 return ToApiValidationFail("User not found.", 404);
 
-            var userDto = new UserDto
-            {
-                Id = user.Id,
-                Email = user.Email,
-                Username = user.Username,
-                Role = user.Role,
-                PhotoUrl = user.PhotoUrl,
-                IsBanned = user.IsBanned && (user.BannedUntil == null || user.BannedUntil > DateTime.UtcNow),
-                BannedUntil = user.BannedUntil,
-                GradeLevel = user.GradeLevel,
-                SchoolYearStart = user.SchoolYearStart,
-                ScheduledDeletionAt = user.ScheduledDeletionAt,
-                ThreadsCount = _db.ForumThreads.Count(t => t.CreatedByUser.Id == user.Id),
-                PostsCount = _db.ForumPosts.Count(p => p.User.Id == user.Id && !p.IsDeleted),
-                PinsCount = _db.EventPins.Count(p => p.CreatedByUser.Id == user.Id)
-            };
+            var userDto = ToUserDto(user);
+            userDto.ThreadsCount = _db.ForumThreads.Count(t => t.CreatedByUser.Id == user.Id);
+            userDto.PostsCount = _db.ForumPosts.Count(p => p.User.Id == user.Id && !p.IsDeleted);
+            userDto.PinsCount = _db.EventPins.Count(p => p.CreatedByUser.Id == user.Id && !p.IsResolved);
 
             return ToApiValidationSuccess(userDto);
         }
@@ -329,6 +392,13 @@ namespace WebAPI.Controllers
             return HttpContext.Connection.RemoteIpAddress?.ToString();
         }
 
+        private string BuildConfirmEmailUrl(string kind, string token)
+        {
+            return $"{_frontendBaseUrl}/confirm-email?kind={Uri.EscapeDataString(kind)}&token={Uri.EscapeDataString(token)}";
+        }
+
+        private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
+
         private static UserDto ToUserDto(User user)
         {
             return new UserDto
@@ -337,6 +407,7 @@ namespace WebAPI.Controllers
                 Username = user.Username,
                 Email = user.Email,
                 Role = user.Role,
+                IsEmailConfirmed = user.IsEmailConfirmed,
                 PhotoUrl = user.PhotoUrl,
                 IsBanned = user.IsBanned && (user.BannedUntil == null || user.BannedUntil > DateTime.UtcNow),
                 BannedUntil = user.BannedUntil,
@@ -347,3 +418,4 @@ namespace WebAPI.Controllers
         }
     }
 }
+

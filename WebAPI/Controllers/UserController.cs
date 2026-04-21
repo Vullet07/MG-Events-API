@@ -1,4 +1,4 @@
-using Data;
+﻿using Data;
 using Data.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -70,9 +70,10 @@ namespace WebAPI.Controllers
                 query = accountState switch
                 {
                     "banned" => query.Where(u => u.IsBanned && (u.BannedUntil == null || u.BannedUntil > now)),
-                    "active" => query.Where(u => !u.IsBanned || (u.BannedUntil != null && u.BannedUntil <= now)),
+                    "active" => query.Where(u => (!u.IsBanned || (u.BannedUntil != null && u.BannedUntil <= now)) && u.IsEmailConfirmed),
                     "expiring" => query.Where(u => u.ScheduledDeletionAt != null && u.ScheduledDeletionAt <= now.AddDays(45)),
                     "protected" => query.Where(u => u.Role == Role.Admin),
+                    "unconfirmed" => query.Where(u => !u.IsEmailConfirmed),
                     _ => query
                 };
             }
@@ -221,7 +222,7 @@ namespace WebAPI.Controllers
                 return ToApiValidationFail("User not found.", 404);
 
             var query = _db.EventPins
-                .Where(p => EF.Property<int>(p, "CreatedByUserId") == id);
+                .Where(p => EF.Property<int>(p, "CreatedByUserId") == id && !p.IsResolved);
 
             var totalCount = await query.CountAsync();
             var items = await query
@@ -278,10 +279,11 @@ namespace WebAPI.Controllers
 
             if (!string.IsNullOrEmpty(dto.Email))
             {
-                if (await _db.Users.AnyAsync(u => u.Email == dto.Email && u.Id != id))
+                var normalizedEmail = dto.Email.Trim().ToLowerInvariant();
+                if (await _db.Users.AnyAsync(u => u.Email == normalizedEmail && u.Id != id))
                     return ToApiValidationFail("Email is already used by another user.", 400);
 
-                user.Email = dto.Email;
+                user.Email = normalizedEmail;
             }
 
             if (!string.IsNullOrWhiteSpace(dto.Username))
@@ -311,6 +313,7 @@ namespace WebAPI.Controllers
         public async Task<IActionResult> GetTeacherRequests()
         {
             var requests = await _db.TeacherRegistrationRequests
+                .Where(r => r.IsEmailConfirmed)
                 .Include(r => r.ReviewedBy)
                 .OrderBy(r => r.Status)
                 .ThenByDescending(r => r.CreatedAt)
@@ -319,6 +322,8 @@ namespace WebAPI.Controllers
                     Id = r.Id,
                     Username = r.Username,
                     Email = r.Email,
+                    IsEmailConfirmed = r.IsEmailConfirmed,
+                    EmailConfirmedAt = r.EmailConfirmedAt,
                     Motivation = r.Motivation,
                     Status = r.Status,
                     CreatedAt = r.CreatedAt,
@@ -342,6 +347,9 @@ namespace WebAPI.Controllers
             if (request.Status != TeacherRegistrationStatus.Pending)
                 return ToApiValidationFail("Teacher request is already reviewed.", 400);
 
+            if (!request.IsEmailConfirmed)
+                return ToApiValidationFail("Teacher request must confirm the school email before approval.", 400);
+
             if (await _db.Users.AnyAsync(u => u.Username == request.Username))
                 return ToApiValidationFail("Cannot approve because username is already in use.", 409);
 
@@ -353,7 +361,9 @@ namespace WebAPI.Controllers
                 Username = request.Username,
                 Email = request.Email,
                 Role = Role.Teacher,
-                PasswordHash = request.PasswordHash
+                PasswordHash = request.PasswordHash,
+                IsEmailConfirmed = true,
+                EmailConfirmedAt = request.EmailConfirmedAt ?? DateTime.UtcNow
             };
 
             request.Status = TeacherRegistrationStatus.Approved;
@@ -378,6 +388,9 @@ namespace WebAPI.Controllers
 
             if (request.Status != TeacherRegistrationStatus.Pending)
                 return ToApiValidationFail("Teacher request is already reviewed.", 400);
+
+            if (!request.IsEmailConfirmed)
+                return ToApiValidationFail("Teacher request must confirm the school email before review.", 400);
 
             request.Status = TeacherRegistrationStatus.Rejected;
             request.ReviewedAt = DateTime.UtcNow;
@@ -419,7 +432,7 @@ namespace WebAPI.Controllers
             }
 
             var baseUrl = $"{Request.Scheme}://{Request.Host}";
-            user.PhotoUrl = $"{baseUrl}/{relativePath.Replace("\\\\", "/")}/{fileName}";
+            user.PhotoUrl = $"{baseUrl}/{relativePath.Replace("\\", "/")}/{fileName}";
             await _db.SaveChangesAsync();
 
             return ToApiValidationSuccess(ToUserDto(user, true), "Profile photo updated.");
@@ -516,6 +529,7 @@ namespace WebAPI.Controllers
                 Username = user.Username,
                 Email = user.Email,
                 Role = user.Role,
+                IsEmailConfirmed = user.IsEmailConfirmed,
                 PhotoUrl = user.PhotoUrl,
                 IsBanned = user.IsBanned && (user.BannedUntil == null || user.BannedUntil > DateTime.UtcNow),
                 BannedUntil = user.BannedUntil,
@@ -528,7 +542,7 @@ namespace WebAPI.Controllers
             {
                 dto.ThreadsCount = _db.ForumThreads.Count(t => t.CreatedByUser.Id == user.Id);
                 dto.PostsCount = _db.ForumPosts.Count(p => p.User.Id == user.Id && !p.IsDeleted);
-                dto.PinsCount = _db.EventPins.Count(p => p.CreatedByUser.Id == user.Id);
+                dto.PinsCount = _db.EventPins.Count(p => p.CreatedByUser.Id == user.Id && !p.IsResolved);
             }
 
             return dto;

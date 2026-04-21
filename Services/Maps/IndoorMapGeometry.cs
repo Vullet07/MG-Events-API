@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 
 namespace Services.Maps
 {
@@ -33,6 +33,47 @@ namespace Services.Maps
         ];
 
         private static readonly Rect SmallHull = new(260d, 120d, 330d, 460d);
+        private static readonly Rect CampusSmallBuildingRect = new(617.42d, 464.32d, 113.23d, 97.50d);
+
+        private static readonly Point[] CampusOuterPolygon =
+        [
+            new(250.48d, 33.44d),
+            new(719.11d, 33.44d),
+            new(719.11d, 464.32d),
+            new(760d, 464.32d),
+            new(760d, 663.52d),
+            new(528.31d, 663.52d),
+            new(528.31d, 464.32d),
+            new(250.48d, 464.32d)
+        ];
+
+        private static readonly Point[] CampusMainPolygon =
+        [
+            new(279.84d, 65.94d),
+            new(324.53d, 65.94d),
+            new(324.53d, 102.92d),
+            new(342.25d, 102.92d),
+            new(342.25d, 108.32d),
+            new(447.05d, 108.32d),
+            new(447.05d, 85.97d),
+            new(476.72d, 85.97d),
+            new(476.72d, 69.02d),
+            new(583.83d, 69.02d),
+            new(583.83d, 101d),
+            new(542.60d, 101d),
+            new(542.60d, 124.89d),
+            new(469.79d, 124.89d),
+            new(469.79d, 151.47d),
+            new(334.94d, 151.47d),
+            new(334.94d, 394.97d),
+            new(506.77d, 394.97d),
+            new(506.77d, 460.85d),
+            new(322.60d, 460.85d),
+            new(322.60d, 394.97d),
+            new(292.56d, 394.97d),
+            new(292.56d, 130.66d),
+            new(279.84d, 130.66d)
+        ];
 
         private static readonly IReadOnlyDictionary<int, Point[]> MainHullPolygons = new Dictionary<int, Point[]>
         {
@@ -64,22 +105,17 @@ namespace Services.Maps
         {
             ["campus"] =
             [
-                new("main-block-north", 244.74, 66.96, 98.79, 67.1, "special"),
-                new("main-block-west", 244.74, 134.06, 61.99, 245.29, "special"),
-                new("main-block-center", 306.72, 147.68, 167.08, 58.67, "special"),
-                new("main-block-gym", 385.44, 75.35, 131.18, 53.44, "special"),
-                new("main-block-south", 306.72, 364.95, 17.84, 32.48, "special"),
-                new("small-building", 592.16, 474.52, 98.79, 112.06, "lab"),
-                new("court", 559.63, 219.51, 126.07, 80.37, "special"),
-                new("parking", 557.53, 464.06, 138.65, 198.44, "zone"),
-                new("north-walk", 215.36, 33.4, 469.81, 18.81, "zone"),
-                new("west-garden", 215.36, 52.21, 30.43, 410.8, "zone"),
-                new("north-garden", 333.97, 69.05, 39.89, 67.1, "zone"),
-                new("east-garden", 493.32, 174.89, 45.13, 165.95, "zone"),
-                new("south-east-garden", 570.12, 347.13, 114.53, 92.42, "zone"),
-                new("south-garden", 493.32, 464.06, 62.99, 198.44, "zone"),
-                new("east-border", 685.17, 464.06, 40.94, 198.44, "zone"),
-                new("south-walk", 493.32, 643.25, 232.8, 18.81, "zone")
+                new("court", 594.35d, 220.05d, 125.81d, 80.73d, "special"),
+                new("small-court", 627.90d, 573.35d, 109.03d, 68.15d, "special"),
+                new("annex-yard", 592.26d, 464.32d, 138.39d, 199.19d, "zone"),
+                new("north-walk", 250.48d, 33.44d, 468.63d, 18.87d, "zone"),
+                new("west-garden", 250.48d, 52.31d, 30.40d, 412.02d, "zone"),
+                new("north-garden", 368.95d, 69.08d, 39.84d, 68.15d, "zone"),
+                new("east-garden", 528.31d, 174.97d, 45.08d, 167.74d, "zone"),
+                new("south-east-garden", 604.84d, 349d, 114.27d, 93.31d, "zone"),
+                new("south-garden", 528.31d, 464.32d, 62.90d, 199.19d, "zone"),
+                new("east-border", 719.11d, 464.32d, 40.89d, 199.19d, "zone"),
+                new("south-walk", 528.31d, 644.65d, 231.69d, 18.87d, "zone")
             ],
             ["main:1"] =
             [
@@ -262,6 +298,11 @@ namespace Services.Maps
 
         private static ResolvedMapZone? ResolveZone(string layerId, double x, double y)
         {
+            if (layerId == "campus")
+            {
+                return ResolveCampusZone(x, y);
+            }
+
             if (Zones.TryGetValue(layerId, out var zones))
             {
                 var zone = zones.FirstOrDefault(item => Contains(item, x, y));
@@ -274,11 +315,6 @@ namespace Services.Maps
                         GetZoneLabel(layerId, zone.Id, zone.Kind),
                         zone.Kind);
                 }
-            }
-
-            if (layerId == "campus")
-            {
-                return null;
             }
 
             var parts = layerId.Split(':');
@@ -308,6 +344,40 @@ namespace Services.Maps
             }
 
             return null;
+        }
+
+        private static ResolvedMapZone? ResolveCampusZone(double x, double y)
+        {
+            if (!PointInPolygon(x, y, CampusOuterPolygon))
+            {
+                return null;
+            }
+
+            if (PointInPolygon(x, y, CampusMainPolygon) || Contains(CampusSmallBuildingRect, x, y))
+            {
+                return null;
+            }
+
+            if (Zones.TryGetValue("campus", out var zones))
+            {
+                var zone = zones.FirstOrDefault(item => Contains(item, x, y));
+                if (zone is not null)
+                {
+                    return new ResolvedMapZone(
+                        "campus",
+                        GetLayerLabel("campus"),
+                        zone.Id,
+                        GetZoneLabel("campus", zone.Id, zone.Kind),
+                        zone.Kind);
+                }
+            }
+
+            return new ResolvedMapZone(
+                "campus",
+                GetLayerLabel("campus"),
+                "CAMPUS-YARD",
+                "Дворна зона",
+                "zone");
         }
 
         public static string GetLayerLabel(string layerId)
@@ -363,18 +433,18 @@ namespace Services.Maps
                 "SERV" => "Обслужващ персонал",
                 "TECH" => "Технологии и роботика",
                 "RESEARCH" => "Изследвания и проучвания",
-                "main-block-north" or "main-block-west" or "main-block-center" or "main-block-gym" or "main-block-south" => "Голяма сграда",
-                "small-building" => "Малка сграда",
                 "court" => "Голямо игрище",
-                "parking" => "Югоизточен двор",
+                "small-court" => "Малко игрище",
+                "annex-yard" => "Дворна зона",
                 "north-walk" => "Северна алея",
-                "west-garden" => "Западен двор",
+                "west-garden" => "Западна зелена зона",
                 "north-garden" => "Северна зелена зона",
                 "east-garden" => "Източна зелена зона",
                 "south-east-garden" => "Югоизточна зелена зона",
-                "south-garden" => "Южен двор",
+                "south-garden" => "Южна зелена зона",
                 "east-border" => "Източна алея",
                 "south-walk" => "Южна алея",
+                "CAMPUS-YARD" => "Дворна зона",
                 _ when zoneId.All(char.IsDigit) => zoneId,
                 _ when zoneId.StartsWith("OPEN-", StringComparison.OrdinalIgnoreCase) => "Обща зона",
                 _ => zoneId
@@ -405,9 +475,7 @@ namespace Services.Maps
         }
 
         private sealed record ZoneDef(string Id, double X, double Y, double Width, double Height, string Kind);
-
         private sealed record Rect(double X, double Y, double Width, double Height);
-
         private sealed record Point(double X, double Y);
     }
 }

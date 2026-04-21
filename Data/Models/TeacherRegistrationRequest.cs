@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace Data.Models
 {
@@ -22,6 +22,11 @@ namespace Data.Models
         public string? Motivation { get; set; }
 
         public TeacherRegistrationStatus Status { get; set; } = TeacherRegistrationStatus.Pending;
+
+        public bool IsEmailConfirmed { get; set; }
+        public string? EmailConfirmationTokenHash { get; set; }
+        public DateTime? EmailConfirmationTokenExpiresAt { get; set; }
+        public DateTime? EmailConfirmedAt { get; set; }
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime? ReviewedAt { get; set; }

@@ -206,6 +206,15 @@ namespace WebAPI.Services.Accounts
                 _db.PinVotes.RemoveRange(pinVotesByUser);
             }
 
+            var resolveConfirmationsByUser = await _db.EventPinResolveConfirmations
+                .Where(c => c.UserId == userId)
+                .ToListAsync(cancellationToken);
+
+            if (resolveConfirmationsByUser.Count > 0)
+            {
+                _db.EventPinResolveConfirmations.RemoveRange(resolveConfirmationsByUser);
+            }
+
             var userPasswordResetTokens = await _db.PasswordResetTokens
                 .Where(t => EF.Property<int>(t, "UserId") == userId)
                 .ToListAsync(cancellationToken);

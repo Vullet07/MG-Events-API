@@ -1,5 +1,4 @@
-using System;
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace Data.Models
 {
@@ -22,6 +21,13 @@ namespace Data.Models
         public double Longitude { get; set; }
 
         public string? PhotoUrl { get; set; }
+
+        public bool IsResolved { get; set; }
+        public DateTime? ResolvedAt { get; set; }
+        public int? ResolvedByUserId { get; set; }
+        public User? ResolvedByUser { get; set; }
+        public DateTime? ArchivedAt { get; set; }
+        public ICollection<EventPinResolveConfirmation> ResolveConfirmations { get; set; } = [];
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

@@ -1,5 +1,4 @@
-using AspNetCoreRateLimit;
-using Data;
+﻿using Data;
 using Data.Models;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -18,6 +17,8 @@ using WebAPI.Controllers;
 using WebAPI.Middleware;
 using WebAPI.Services.Accounts;
 using WebAPI.Services.Security;
+using WebAPI.Services.Pins;
+using WebAPI.Services.Quotas;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -48,14 +49,23 @@ builder.Host.UseSerilog();
 
 // CORS
 
+var allowedFrontendOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>()
+    ?.Where(origin => !string.IsNullOrWhiteSpace(origin))
+    .ToArray();
+
+if (allowedFrontendOrigins == null || allowedFrontendOrigins.Length == 0)
+{
+    allowedFrontendOrigins = ["http://localhost:5173"];
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
         policy
-            .WithOrigins(
-                "http://localhost:5173"
-            )
+            .WithOrigins(allowedFrontendOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod();
     });
@@ -148,6 +158,7 @@ builder.Services.AddScoped<IAuthUserService, AuthUserService>();
 builder.Services.AddScoped<IDataSeeder, DataSeeder>();
 builder.Services.AddScoped<IUserLifecycleService, UserLifecycleService>();
 builder.Services.AddSingleton<ILoginAttemptQuarantineService, LoginAttemptQuarantineService>();
+builder.Services.AddScoped<IUserActionQuotaService, UserActionQuotaService>();
 
 // Other services
 
@@ -155,6 +166,8 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddAuthorization();
 builder.Services.AddMemoryCache();
 builder.Services.AddHostedService<ExpiredStudentCleanupHostedService>();
+builder.Services.AddHostedService<ResolvedPinCleanupHostedService>();
+builder.Services.AddHostedService<UserActionQuotaCleanupHostedService>();
 
 var app = builder.Build();
 
@@ -207,8 +220,6 @@ app.UseSerilogRequestLogging(options =>
 
 app.UseAuthentication();
 
-app.UseMiddleware<RateLimitingMiddleware>();
-
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -226,3 +237,5 @@ app.UseMiddleware<BanMiddleware>();
 app.MapControllers();
 
 app.Run();
+
+

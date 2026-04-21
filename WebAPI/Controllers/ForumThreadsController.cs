@@ -1,3 +1,4 @@
+using System.Globalization;
 using Data;
 using Data.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -6,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Services.AuthUserService;
 using Services.Dtos;
 using WebAPI.Extensions;
+using WebAPI.Services.Quotas;
 
 namespace WebAPI.Controllers
 {
@@ -16,12 +18,18 @@ namespace WebAPI.Controllers
         private readonly AppDbContext _db;
         private readonly IAuthUserService _authUser;
         private readonly IWebHostEnvironment _env;
+        private readonly IUserActionQuotaService _quotaService;
 
-        public ForumThreadsController(AppDbContext db, IAuthUserService authUser, IWebHostEnvironment env)
+        public ForumThreadsController(
+            AppDbContext db,
+            IAuthUserService authUser,
+            IWebHostEnvironment env,
+            IUserActionQuotaService quotaService)
         {
             _db = db;
             _authUser = authUser;
             _env = env;
+            _quotaService = quotaService;
         }
 
         [Authorize]
@@ -38,6 +46,10 @@ namespace WebAPI.Controllers
             if (user == null)
                 return ToApiValidationFail("Липсва удостоверен потребител.", 401);
 
+            var quota = await _quotaService.CheckAsync(user.Id, UserActionQuotaType.ForumThreadCreate);
+            if (!quota.Allowed)
+                return ToQuotaFail(quota);
+
             var thread = new ForumThread
             {
                 Title = dto.Title.Trim(),
@@ -49,6 +61,7 @@ namespace WebAPI.Controllers
 
             _db.ForumThreads.Add(thread);
             await _db.SaveChangesAsync();
+            await _quotaService.RecordAsync(user.Id, UserActionQuotaType.ForumThreadCreate);
 
             return ToApiValidationSuccess(ToDto(thread), "Темата е създадена успешно.");
         }
@@ -298,6 +311,13 @@ namespace WebAPI.Controllers
             {
                 System.IO.File.Delete(fullPath);
             }
+        }
+
+        private IActionResult ToQuotaFail(ActionQuotaCheckResult quota)
+        {
+            var retryAfterSeconds = Math.Max(1, (int)Math.Ceiling(quota.RetryAfter.TotalSeconds));
+            Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+            return StatusCode(StatusCodes.Status429TooManyRequests, ApiResponse.Fail(quota.Message));
         }
     }
 }

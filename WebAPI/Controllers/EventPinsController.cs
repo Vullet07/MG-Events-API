@@ -11,6 +11,7 @@ using Services.Dtos;
 using Services.Maps;
 using WebAPI.Extensions;
 using WebAPI.Models;
+using WebAPI.Services.Quotas;
 
 namespace WebAPI.Controllers
 {
@@ -18,28 +19,42 @@ namespace WebAPI.Controllers
     [Route("api/event-pins")]
     public class EventPinsController : ApiControllerBase
     {
+        private const int ResolveConfirmationThreshold = 3;
         private readonly AppDbContext _db;
         private readonly IAuthUserService _authUser;
         private readonly IWebHostEnvironment _env;
+        private readonly IUserActionQuotaService _quotaService;
 
-        public EventPinsController(AppDbContext db, IAuthUserService authUser, IWebHostEnvironment env)
+        public EventPinsController(
+            AppDbContext db,
+            IAuthUserService authUser,
+            IWebHostEnvironment env,
+            IUserActionQuotaService quotaService)
         {
             _db = db;
             _authUser = authUser;
             _env = env;
+            _quotaService = quotaService;
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetAll()
+        public async Task<IActionResult> GetAll([FromQuery] string? status = null)
         {
+            var normalizedStatus = NormalizeStatusFilter(status);
             var currentUserId = _authUser.Id;
-            var pins = await _db.EventPins
+            var query = ApplyStatusFilter(_db.EventPins.AsQueryable(), normalizedStatus);
+
+            var pins = await query
                 .Include(p => p.CreatedByUser)
+                .Include(p => p.ResolvedByUser)
                 .Select(p => new
                 {
                     Pin = p,
                     Upvotes = _db.PinVotes.Count(v => v.Pin.Id == p.Id && v.Value == VoteValue.Up),
                     Downvotes = _db.PinVotes.Count(v => v.Pin.Id == p.Id && v.Value == VoteValue.Down),
+                    ResolveConfirmationCount = _db.EventPinResolveConfirmations.Count(c => c.PinId == p.Id),
+                    HasCurrentUserResolveConfirmation = currentUserId != null
+                        && _db.EventPinResolveConfirmations.Any(c => c.PinId == p.Id && c.UserId == currentUserId.Value),
                     MyVote = currentUserId == null
                         ? 0
                         : _db.PinVotes
@@ -52,7 +67,13 @@ namespace WebAPI.Controllers
                 .ToListAsync();
 
             var response = pins
-                .Select(x => ToPinDto(x.Pin, x.Upvotes, x.Downvotes, x.MyVote))
+                .Select(x => ToPinDto(
+                    x.Pin,
+                    x.Upvotes,
+                    x.Downvotes,
+                    x.MyVote,
+                    resolveConfirmationCount: x.ResolveConfirmationCount,
+                    hasCurrentUserResolveConfirmation: x.HasCurrentUserResolveConfirmation))
                 .ToList();
 
             return ToApiValidationSuccess(response);
@@ -80,6 +101,10 @@ namespace WebAPI.Controllers
             if (user == null)
                 return ToApiValidationFail("Липсва удостоверен потребител.", 401);
 
+            var quota = await _quotaService.CheckAsync(user.Id, UserActionQuotaType.EventPinCreate);
+            if (!quota.Allowed)
+                return ToQuotaFail(quota);
+
             var pin = new EventPin
             {
                 Title = dto.Title.Trim(),
@@ -88,14 +113,19 @@ namespace WebAPI.Controllers
                 Latitude = dto.Latitude,
                 Longitude = dto.Longitude,
                 PhotoUrl = await SavePhotoAsync(dto.Photo),
-                CreatedByUser = user
+                CreatedByUser = user,
+                IsResolved = false,
+                ResolvedAt = null,
+                ResolvedByUserId = null,
+                ArchivedAt = null
             };
 
             _db.EventPins.Add(pin);
             await _db.SaveChangesAsync();
+            await _quotaService.RecordAsync(user.Id, UserActionQuotaType.EventPinCreate);
 
             return ToApiValidationSuccess(
-                ToPinDto(pin, 0, 0, 0, zone),
+                await BuildPinDtoAsync(pin, zone),
                 "Пинът е създаден успешно.");
         }
 
@@ -106,6 +136,7 @@ namespace WebAPI.Controllers
         {
             var pin = await _db.EventPins
                 .Include(p => p.CreatedByUser)
+                .Include(p => p.ResolvedByUser)
                 .FirstOrDefaultAsync(p => p.Id == id);
 
             if (pin == null)
@@ -142,19 +173,100 @@ namespace WebAPI.Controllers
 
             await _db.SaveChangesAsync();
 
-            var myVote = _authUser.Id == null
-                ? 0
-                : await _db.PinVotes
-                    .Where(v => v.Pin.Id == pin.Id && v.User.Id == _authUser.Id.Value)
-                    .Select(v => (int?)v.Value)
-                    .FirstOrDefaultAsync() ?? 0;
+            return ToApiValidationSuccess(
+                await BuildPinDtoAsync(pin),
+                "Пинът е обновен.");
+        }
 
-            var upvotes = await _db.PinVotes.CountAsync(v => v.Pin.Id == pin.Id && v.Value == VoteValue.Up);
-            var downvotes = await _db.PinVotes.CountAsync(v => v.Pin.Id == pin.Id && v.Value == VoteValue.Down);
+        [Authorize]
+        [HttpPost("{id:int}/resolve")]
+        public async Task<IActionResult> Resolve(int id)
+        {
+            var pin = await _db.EventPins
+                .Include(p => p.CreatedByUser)
+                .Include(p => p.ResolvedByUser)
+                .FirstOrDefaultAsync(p => p.Id == id);
+
+            if (pin == null)
+                return ToApiValidationFail("Пинът не е намерен.", 404);
+
+            if (pin.IsResolved)
+                return ToApiValidationFail("Пинът вече е маркиран като решен.", 400);
+
+            if (_authUser.Id == null)
+                return ToApiValidationFail("Липсва удостоверен потребител.", 401);
+
+            var currentUser = await _db.Users.FindAsync(_authUser.Id.Value);
+            if (currentUser == null)
+                return ToApiValidationFail("Потребителят не е намерен.", 401);
+
+            var existingConfirmation = await _db.EventPinResolveConfirmations
+                .FirstOrDefaultAsync(c => c.PinId == pin.Id && c.UserId == currentUser.Id);
+
+            if (existingConfirmation != null)
+                return ToApiValidationFail("Вече потвърди, че този пин е разрешен.", 400);
+
+            _db.EventPinResolveConfirmations.Add(new EventPinResolveConfirmation
+            {
+                PinId = pin.Id,
+                Pin = pin,
+                UserId = currentUser.Id,
+                User = currentUser
+            });
+
+            await _db.SaveChangesAsync();
+
+            var confirmationCount = await _db.EventPinResolveConfirmations.CountAsync(c => c.PinId == pin.Id);
+            if (confirmationCount >= ResolveConfirmationThreshold)
+            {
+                await ResolvePinInternalAsync(pin, currentUser);
+                await _db.SaveChangesAsync();
+
+                return ToApiValidationSuccess(
+                    await BuildPinDtoAsync(pin),
+                    $"Достигнат е прагът от {ResolveConfirmationThreshold} потвърждения и пинът е премахнат от активната карта.");
+            }
 
             return ToApiValidationSuccess(
-                ToPinDto(pin, upvotes, downvotes, myVote),
-                "Пинът е обновен.");
+                await BuildPinDtoAsync(pin),
+                $"Потвърждението е записано ({confirmationCount}/{ResolveConfirmationThreshold}).");
+        }
+
+        [Authorize]
+        [HttpPost("{id:int}/unresolve")]
+        public async Task<IActionResult> Unresolve(int id)
+        {
+            var pin = await _db.EventPins
+                .Include(p => p.CreatedByUser)
+                .Include(p => p.ResolvedByUser)
+                .FirstOrDefaultAsync(p => p.Id == id);
+
+            if (pin == null)
+                return ToApiValidationFail("Пинът не е намерен.", 404);
+
+            if (!CanManagePin(pin))
+                return ToApiValidationFail("Нямаш права да върнеш този пин като активен.", 403);
+
+            if (!pin.IsResolved)
+                return ToApiValidationFail("Пинът не е маркиран като решен.", 400);
+
+            pin.IsResolved = false;
+            pin.ResolvedAt = null;
+            pin.ArchivedAt = null;
+            pin.ResolvedByUserId = null;
+            pin.ResolvedByUser = null;
+            var confirmations = await _db.EventPinResolveConfirmations
+                .Where(c => c.PinId == pin.Id)
+                .ToListAsync();
+
+            if (confirmations.Count > 0)
+            {
+                _db.EventPinResolveConfirmations.RemoveRange(confirmations);
+            }
+
+            await _db.SaveChangesAsync();
+
+            return ToApiValidationSuccess(await BuildPinDtoAsync(pin), "Пинът отново е активен.");
         }
 
         [Authorize]
@@ -194,7 +306,7 @@ namespace WebAPI.Controllers
             if (dto.Value != 1 && dto.Value != -1)
                 return ToApiValidationFail("Гласът трябва да е 1 или -1.", 400);
 
-            var pin = await _db.EventPins.FirstOrDefaultAsync(p => p.Id == id);
+            var pin = await _db.EventPins.FirstOrDefaultAsync(p => p.Id == id && !p.IsResolved);
             if (pin == null)
                 return ToApiValidationFail("Пинът не е намерен.", 404);
 
@@ -252,8 +364,7 @@ namespace WebAPI.Controllers
 
         private async Task<PinMonthlyReportDto> BuildMonthlyReportAsync(string? monthKey)
         {
-            var periodStart = ParseMonthStart(monthKey);
-            var periodEnd = periodStart.AddMonths(1);
+            var (periodStartLocal, periodStart, periodEnd) = ParseMonthRange(monthKey);
 
             var rawPins = await _db.EventPins
                 .Include(p => p.CreatedByUser)
@@ -291,8 +402,8 @@ namespace WebAPI.Controllers
             var culture = CultureInfo.GetCultureInfo("bg-BG");
             var report = new PinMonthlyReportDto
             {
-                MonthKey = periodStart.ToString("yyyy-MM", CultureInfo.InvariantCulture),
-                MonthLabel = culture.TextInfo.ToTitleCase(periodStart.ToString("MMMM yyyy", culture)),
+                MonthKey = periodStartLocal.ToString("yyyy-MM", CultureInfo.InvariantCulture),
+                MonthLabel = culture.TextInfo.ToTitleCase(periodStartLocal.ToString("MMMM yyyy", culture)),
                 GeneratedAt = DateTime.UtcNow,
                 TotalPins = decoratedPins.Count,
                 PinsWithPhotos = decoratedPins.Count(item => !string.IsNullOrWhiteSpace(item.Pin.PhotoUrl)),
@@ -356,24 +467,79 @@ namespace WebAPI.Controllers
             return report;
         }
 
-        private static DateTime ParseMonthStart(string? monthKey)
+        private static IQueryable<EventPin> ApplyStatusFilter(IQueryable<EventPin> query, string status) => status switch
         {
+            "resolved" => query.Where(p => p.IsResolved),
+            "all" => query,
+            _ => query.Where(p => !p.IsResolved)
+        };
+
+        private static string NormalizeStatusFilter(string? status)
+        {
+            var normalized = status?.Trim().ToLowerInvariant();
+            return normalized is "resolved" or "all" ? normalized : "active";
+        }
+
+        private static (DateTime LocalStart, DateTime UtcStart, DateTime UtcEnd) ParseMonthRange(string? monthKey)
+        {
+            DateTime localStart;
+
             if (!string.IsNullOrWhiteSpace(monthKey)
                 && DateTime.TryParseExact(
                     $"{monthKey}-01",
                     "yyyy-MM-dd",
                     CultureInfo.InvariantCulture,
-                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    DateTimeStyles.None,
                     out var parsed))
             {
-                return new DateTime(parsed.Year, parsed.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+                localStart = new DateTime(parsed.Year, parsed.Month, 1, 0, 0, 0, DateTimeKind.Unspecified);
+            }
+            else
+            {
+                var now = ToBulgariaTime(DateTime.UtcNow);
+                localStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Unspecified);
             }
 
-            var now = DateTime.UtcNow;
-            return new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            var nextLocalStart = localStart.AddMonths(1);
+            return (
+                localStart,
+                TimeZoneInfo.ConvertTimeToUtc(localStart, BulgariaTimeZone),
+                TimeZoneInfo.ConvertTimeToUtc(nextLocalStart, BulgariaTimeZone));
         }
 
-        private EventPinDto ToPinDto(EventPin pin, int upvotes, int downvotes, int myVote, ResolvedMapZone? resolvedZone = null)
+        private async Task<EventPinDto> BuildPinDtoAsync(EventPin pin, ResolvedMapZone? resolvedZone = null)
+        {
+            var currentUserId = _authUser.Id;
+            var upvotes = await _db.PinVotes.CountAsync(v => v.Pin.Id == pin.Id && v.Value == VoteValue.Up);
+            var downvotes = await _db.PinVotes.CountAsync(v => v.Pin.Id == pin.Id && v.Value == VoteValue.Down);
+            var myVote = currentUserId == null
+                ? 0
+                : await _db.PinVotes
+                    .Where(v => v.Pin.Id == pin.Id && v.User.Id == currentUserId.Value)
+                    .Select(v => (int?)v.Value)
+                    .FirstOrDefaultAsync() ?? 0;
+            var resolveConfirmationCount = await _db.EventPinResolveConfirmations.CountAsync(c => c.PinId == pin.Id);
+            var hasCurrentUserResolveConfirmation = currentUserId != null
+                && await _db.EventPinResolveConfirmations.AnyAsync(c => c.PinId == pin.Id && c.UserId == currentUserId.Value);
+
+            return ToPinDto(
+                pin,
+                upvotes,
+                downvotes,
+                myVote,
+                resolvedZone,
+                resolveConfirmationCount,
+                hasCurrentUserResolveConfirmation);
+        }
+
+        private EventPinDto ToPinDto(
+            EventPin pin,
+            int upvotes,
+            int downvotes,
+            int myVote,
+            ResolvedMapZone? resolvedZone = null,
+            int resolveConfirmationCount = 0,
+            bool hasCurrentUserResolveConfirmation = false)
         {
             resolvedZone ??= IndoorMapGeometry.TryResolveZone(pin.Latitude, pin.Longitude, out var zone)
                 ? zone
@@ -391,6 +557,14 @@ namespace WebAPI.Controllers
                 CreatedAt = pin.CreatedAt,
                 CreatedByUserId = pin.CreatedByUser.Id,
                 CreatedByUsername = pin.CreatedByUser.Username,
+                IsResolved = pin.IsResolved,
+                ResolvedAt = pin.ResolvedAt,
+                ResolvedByUserId = pin.ResolvedByUserId,
+                ResolvedByUsername = pin.ResolvedByUser?.Username,
+                ArchivedAt = pin.ArchivedAt,
+                ResolveConfirmationCount = resolveConfirmationCount,
+                ResolveThreshold = ResolveConfirmationThreshold,
+                HasCurrentUserResolveConfirmation = hasCurrentUserResolveConfirmation,
                 LayerId = resolvedZone?.LayerId ?? "unknown",
                 LayerLabel = resolvedZone?.LayerLabel ?? "Неизвестен слой",
                 ZoneId = resolvedZone?.ZoneId ?? "unknown",
@@ -403,6 +577,17 @@ namespace WebAPI.Controllers
             };
         }
 
+        private Task ResolvePinInternalAsync(EventPin pin, User resolvedBy)
+        {
+            var resolvedAt = DateTime.UtcNow;
+            pin.IsResolved = true;
+            pin.ResolvedAt = resolvedAt;
+            pin.ArchivedAt = resolvedAt;
+            pin.ResolvedByUserId = resolvedBy.Id;
+            pin.ResolvedByUser = resolvedBy;
+            return Task.CompletedTask;
+        }
+
         private bool CanManagePin(EventPin pin)
         {
             if (_authUser.Id == null)
@@ -411,8 +596,8 @@ namespace WebAPI.Controllers
             }
 
             return _authUser.Id == pin.CreatedByUser.Id
-                   || _authUser.Role == Role.Admin
-                   || _authUser.Role == Role.Teacher;
+                || _authUser.Role == Role.Admin
+                || _authUser.Role == Role.Teacher;
         }
 
         private async Task<string?> SavePhotoAsync(IFormFile? file)
@@ -476,6 +661,13 @@ namespace WebAPI.Controllers
             return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
         }
 
+        private IActionResult ToQuotaFail(ActionQuotaCheckResult quota)
+        {
+            var retryAfterSeconds = Math.Max(1, (int)Math.Ceiling(quota.RetryAfter.TotalSeconds));
+            Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+            return StatusCode(StatusCodes.Status429TooManyRequests, ApiResponse.Fail(quota.Message));
+        }
+
         private static string BuildWordCompatibleHtml(PinMonthlyReportDto report)
         {
             var builder = new StringBuilder();
@@ -484,13 +676,13 @@ namespace WebAPI.Controllers
             builder.AppendLine("body{font-family:Calibri,Arial,sans-serif;color:#1f2937;padding:24px;} h1,h2{color:#991b1b;} table{border-collapse:collapse;width:100%;margin:16px 0;} th,td{border:1px solid #d1d5db;padding:8px;text-align:left;} th{background:#fee2e2;} .meta{margin-bottom:20px;color:#4b5563;} .pill-row{margin-top:12px;line-height:1.8;} .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#fee2e2;color:#991b1b;margin:0 8px 8px 0;}");
             builder.AppendLine("</style></head><body>");
             builder.AppendLine($"<h1>{Encode(report.SchoolName)}</h1>");
-            builder.AppendLine($"<div class=\"meta\"><strong>Месечен отчет за пинове</strong> · {Encode(report.MonthLabel)} · Генериран на {Encode(report.GeneratedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm"))}</div>");
+            builder.AppendLine($"<div class=\"meta\"><strong>Месечен отчет за пинове</strong> · {Encode(report.MonthLabel)} · Генериран на {Encode(FormatBulgariaTime(report.GeneratedAt))}</div>");
             builder.AppendLine($"<div class=\"pill-row\"><span class=\"pill\">Общо пинове: {report.TotalPins}</span> <span class=\"pill\">Пинове със снимка: {report.PinsWithPhotos}</span> <span class=\"pill\">Активни зони: {report.ActiveZones}</span></div>");
 
             builder.AppendLine("<h2>Най-проблемни места</h2><table><thead><tr><th>Слой</th><th>Зона</th><th>Категория</th><th>Брой пинове</th><th>Общ рейтинг</th><th>Последен пин</th></tr></thead><tbody>");
             foreach (var hotspot in report.Hotspots)
             {
-                builder.AppendLine($"<tr><td>{Encode(hotspot.LayerLabel)}</td><td>{Encode(hotspot.ZoneLabel)}</td><td>{Encode(hotspot.DominantCategory)}</td><td>{hotspot.PinsCount}</td><td>{hotspot.TotalScore}</td><td>{Encode(hotspot.LatestPinAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm"))}</td></tr>");
+                builder.AppendLine($"<tr><td>{Encode(hotspot.LayerLabel)}</td><td>{Encode(hotspot.ZoneLabel)}</td><td>{Encode(hotspot.DominantCategory)}</td><td>{hotspot.PinsCount}</td><td>{hotspot.TotalScore}</td><td>{Encode(FormatBulgariaTime(hotspot.LatestPinAt))}</td></tr>");
             }
 
             builder.AppendLine("</tbody></table>");
@@ -504,12 +696,38 @@ namespace WebAPI.Controllers
             builder.AppendLine("<h2>Най-актуални пинове с висок рейтинг</h2><table><thead><tr><th>Заглавие</th><th>Категория</th><th>Локация</th><th>Автор</th><th>Рейтинг</th><th>Дата</th></tr></thead><tbody>");
             foreach (var item in report.TopPins)
             {
-                builder.AppendLine($"<tr><td>{Encode(item.Title)}</td><td>{Encode(item.Category)}</td><td>{Encode($"{item.LayerLabel} · {item.ZoneLabel}")}</td><td>{Encode(item.CreatedByUsername)}</td><td>{item.Score}</td><td>{Encode(item.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm"))}</td></tr>");
+                builder.AppendLine($"<tr><td>{Encode(item.Title)}</td><td>{Encode(item.Category)}</td><td>{Encode($"{item.LayerLabel} · {item.ZoneLabel}")}</td><td>{Encode(item.CreatedByUsername)}</td><td>{item.Score}</td><td>{Encode(FormatBulgariaTime(item.CreatedAt))}</td></tr>");
             }
 
             builder.AppendLine("</tbody></table></body></html>");
             return builder.ToString();
         }
+
+        private static readonly TimeZoneInfo BulgariaTimeZone = ResolveBulgariaTimeZone();
+
+        private static TimeZoneInfo ResolveBulgariaTimeZone()
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById("Europe/Sofia");
+            }
+            catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById("FLE Standard Time");
+            }
+        }
+
+        private static DateTime ToBulgariaTime(DateTime value)
+        {
+            var utcValue = value.Kind == DateTimeKind.Utc
+                ? value
+                : DateTime.SpecifyKind(value, DateTimeKind.Utc);
+
+            return TimeZoneInfo.ConvertTimeFromUtc(utcValue, BulgariaTimeZone);
+        }
+
+        private static string FormatBulgariaTime(DateTime value)
+            => ToBulgariaTime(value).ToString("dd.MM.yyyy HH:mm", CultureInfo.GetCultureInfo("bg-BG"));
 
         private static string Encode(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
     }

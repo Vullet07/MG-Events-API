@@ -30,6 +30,9 @@ namespace Data.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<DateTime?>("ArchivedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<string>("Category")
                         .IsRequired()
                         .HasMaxLength(80)
@@ -44,6 +47,9 @@ namespace Data.Migrations
                     b.Property<string>("Description")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<bool>("IsResolved")
+                        .HasColumnType("bit");
+
                     b.Property<double>("Latitude")
                         .HasColumnType("float");
 
@@ -51,7 +57,14 @@ namespace Data.Migrations
                         .HasColumnType("float");
 
                     b.Property<string>("PhotoUrl")
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("ResolvedByUserId")
+                        .HasColumnType("int");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -59,9 +72,44 @@ namespace Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ArchivedAt");
+
                     b.HasIndex("CreatedByUserId");
 
+                    b.HasIndex("IsResolved");
+
+                    b.HasIndex("ResolvedByUserId");
+
                     b.ToTable("EventPins");
+                });
+
+            modelBuilder.Entity("Data.Models.EventPinResolveConfirmation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("PinId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PinId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("PinId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("EventPinResolveConfirmations");
                 });
 
             modelBuilder.Entity("Data.Models.ForumPost", b =>
@@ -295,6 +343,19 @@ namespace Data.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<DateTime?>("EmailConfirmationTokenExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("EmailConfirmationTokenHash")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime?>("EmailConfirmedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsEmailConfirmed")
+                        .HasColumnType("bit");
+
                     b.Property<string>("Motivation")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
@@ -323,6 +384,10 @@ namespace Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("EmailConfirmationTokenHash")
+                        .IsUnique()
+                        .HasFilter("[EmailConfirmationTokenHash] IS NOT NULL");
+
                     b.HasIndex("ReviewedByUserId");
 
                     b.ToTable("TeacherRegistrationRequests");
@@ -349,6 +414,16 @@ namespace Data.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<DateTime?>("EmailConfirmationTokenExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("EmailConfirmationTokenHash")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime?>("EmailConfirmedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<int?>("GradeLevel")
                         .HasColumnType("int");
 
@@ -356,6 +431,9 @@ namespace Data.Migrations
                         .HasColumnType("bit");
 
                     b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsEmailConfirmed")
                         .HasColumnType("bit");
 
                     b.Property<string>("PasswordHash")
@@ -382,12 +460,40 @@ namespace Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("EmailConfirmationTokenHash")
+                        .IsUnique()
+                        .HasFilter("[EmailConfirmationTokenHash] IS NOT NULL");
+
                     b.HasIndex("ScheduledDeletionAt");
 
                     b.HasIndex("Username")
                         .IsUnique();
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("Data.Models.UserActionQuotaEvent", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("ActionType")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "ActionType", "CreatedAt");
+
+                    b.ToTable("UserActionQuotaEvents");
                 });
 
             modelBuilder.Entity("Data.Models.EventPin", b =>
@@ -398,7 +504,33 @@ namespace Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("Data.Models.User", "ResolvedByUser")
+                        .WithMany()
+                        .HasForeignKey("ResolvedByUserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.Navigation("CreatedByUser");
+
+                    b.Navigation("ResolvedByUser");
+                });
+
+            modelBuilder.Entity("Data.Models.EventPinResolveConfirmation", b =>
+                {
+                    b.HasOne("Data.Models.EventPin", "Pin")
+                        .WithMany("ResolveConfirmations")
+                        .HasForeignKey("PinId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Data.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Pin");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("Data.Models.ForumPost", b =>
@@ -513,6 +645,22 @@ namespace Data.Migrations
                         .OnDelete(DeleteBehavior.SetNull);
 
                     b.Navigation("ReviewedBy");
+                });
+
+            modelBuilder.Entity("Data.Models.UserActionQuotaEvent", b =>
+                {
+                    b.HasOne("Data.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Data.Models.EventPin", b =>
+                {
+                    b.Navigation("ResolveConfirmations");
                 });
 
             modelBuilder.Entity("Data.Models.ForumPost", b =>

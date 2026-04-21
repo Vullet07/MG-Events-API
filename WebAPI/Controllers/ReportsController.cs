@@ -1,3 +1,4 @@
+using System.Globalization;
 using Data;
 using Data.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -7,6 +8,7 @@ using Services.AuthUserService;
 using Services.Dtos;
 using WebAPI.Extensions;
 using WebAPI.Services.Accounts;
+using WebAPI.Services.Quotas;
 
 namespace WebAPI.Controllers
 {
@@ -18,15 +20,18 @@ namespace WebAPI.Controllers
         private readonly AppDbContext _db;
         private readonly IAuthUserService _authUser;
         private readonly IUserLifecycleService _userLifecycleService;
+        private readonly IUserActionQuotaService _quotaService;
 
         public ReportsController(
             AppDbContext db,
             IAuthUserService authUser,
-            IUserLifecycleService userLifecycleService)
+            IUserLifecycleService userLifecycleService,
+            IUserActionQuotaService quotaService)
         {
             _db = db;
             _authUser = authUser;
             _userLifecycleService = userLifecycleService;
+            _quotaService = quotaService;
         }
 
         [HttpPost]
@@ -38,6 +43,10 @@ namespace WebAPI.Controllers
             var reporter = await _db.Users.FindAsync(_authUser.Id);
             if (reporter == null)
                 return ToApiValidationFail("User not found.", 401);
+
+            var quota = await _quotaService.CheckAsync(reporter.Id, UserActionQuotaType.ReportCreate);
+            if (!quota.Allowed)
+                return ToQuotaFail(quota);
 
             var exists = dto.TargetType switch
             {
@@ -62,6 +71,7 @@ namespace WebAPI.Controllers
 
             _db.Reports.Add(report);
             await _db.SaveChangesAsync();
+            await _quotaService.RecordAsync(reporter.Id, UserActionQuotaType.ReportCreate);
 
             return ToApiValidationSuccess("Report submitted.");
         }
@@ -357,6 +367,13 @@ namespace WebAPI.Controllers
             }
 
             return mapped;
+        }
+
+        private IActionResult ToQuotaFail(ActionQuotaCheckResult quota)
+        {
+            var retryAfterSeconds = Math.Max(1, (int)Math.Ceiling(quota.RetryAfter.TotalSeconds));
+            Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+            return StatusCode(StatusCodes.Status429TooManyRequests, ApiResponse.Fail(quota.Message));
         }
     }
 }

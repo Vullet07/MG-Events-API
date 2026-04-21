@@ -29,11 +29,11 @@ namespace Services.Seeding
 
         private static readonly TeacherSeed[] TeacherSeeds =
         [
-            new("teacher", "teacher@mg-akp.bg"),
-            new("m.ivanova", "m.ivanova@mg-akp.bg"),
-            new("n.kolev", "n.kolev@mg-akp.bg"),
-            new("g.stoyanova", "g.stoyanova@mg-akp.bg"),
-            new("r.petrova", "r.petrova@mg-akp.bg")
+            new("teacher", "teacher@schoolmath.eu"),
+            new("m.ivanova", "m.ivanova@schoolmath.eu"),
+            new("n.kolev", "n.kolev@schoolmath.eu"),
+            new("g.stoyanova", "g.stoyanova@schoolmath.eu"),
+            new("r.petrova", "r.petrova@schoolmath.eu")
         ];
 
         private static readonly ThreadSeed[] ThreadSeeds =
@@ -197,6 +197,9 @@ namespace Services.Seeding
             _db.EventPins.AddRange(pins);
             await _db.SaveChangesAsync();
 
+            _db.EventPinResolveConfirmations.AddRange(CreatePinResolveConfirmations(users, pins));
+            await _db.SaveChangesAsync();
+
             _db.PostVotes.AddRange(CreatePostVotes(users, posts));
             _db.PinVotes.AddRange(CreatePinVotes(users, pins));
             _db.Reports.AddRange(CreateReports(users, posts, threads, pins));
@@ -207,9 +210,11 @@ namespace Services.Seeding
         }
         private async Task ClearAllAsync()
         {
+            _db.EventPinResolveConfirmations.RemoveRange(_db.EventPinResolveConfirmations);
             _db.PostVotes.RemoveRange(_db.PostVotes);
             _db.PinVotes.RemoveRange(_db.PinVotes);
             _db.Reports.RemoveRange(_db.Reports);
+            _db.UserActionQuotaEvents.RemoveRange(_db.UserActionQuotaEvents);
             _db.PasswordResetTokens.RemoveRange(_db.PasswordResetTokens);
             _db.ForumPosts.RemoveRange(_db.ForumPosts);
             _db.ForumThreads.RemoveRange(_db.ForumThreads);
@@ -226,7 +231,9 @@ namespace Services.Seeding
             {
                 "PostVotes",
                 "PinVotes",
+                "EventPinResolveConfirmations",
                 "Reports",
+                "UserActionQuotaEvents",
                 "PasswordResetTokens",
                 "ForumPosts",
                 "ForumThreads",
@@ -245,7 +252,7 @@ namespace Services.Seeding
         {
             var users = new List<User>
             {
-                CreateUser("admin", "admin@mg-akp.bg", Role.Admin)
+                CreateUser("admin", "admin@schoolmath.eu", Role.Admin)
             };
 
             users.AddRange(TeacherSeeds.Select(seed => CreateUser(seed.Username, seed.Email, Role.Teacher)));
@@ -258,7 +265,7 @@ namespace Services.Seeding
                 var last = StudentLastNames[(i * 3) % StudentLastNames.Length];
                 var suffix = (i / Sections.Length) + 1;
                 var username = $"{first}.{last}.{gradeLevel}{section}{suffix}";
-                var student = CreateUser(username, $"{username}@mg-akp.bg", Role.Student, gradeLevel);
+                var student = CreateUser(username, $"{username}@schoolmath.eu", Role.Student, gradeLevel);
 
                 if (i == 6)
                 {
@@ -394,6 +401,101 @@ namespace Services.Seeding
             }
 
             return pins.OrderByDescending(pin => pin.CreatedAt).ToList();
+        }
+
+        private List<EventPinResolveConfirmation> CreatePinResolveConfirmations(List<User> users, List<EventPin> pins)
+        {
+            var confirmations = new List<EventPinResolveConfirmation>();
+            var participants = users
+                .Where(user => user.Role == Role.Student || user.Role == Role.Teacher || user.Role == Role.Admin)
+                .OrderBy(user => user.Role)
+                .ThenBy(user => user.Username)
+                .ToList();
+
+            if (participants.Count == 0 || pins.Count == 0)
+            {
+                return confirmations;
+            }
+
+            var orderedPins = pins.OrderByDescending(pin => pin.CreatedAt).ToList();
+            var usedPairs = new HashSet<string>();
+            var participantCursor = 0;
+
+            foreach (var pin in orderedPins.Skip(10).Take(8))
+            {
+                var resolvedAt = pin.CreatedAt.AddDays(2).AddHours(3);
+                if (resolvedAt > DateTime.UtcNow.AddHours(-2))
+                {
+                    resolvedAt = DateTime.UtcNow.AddHours(-2);
+                }
+
+                pin.IsResolved = true;
+                pin.ResolvedAt = resolvedAt;
+                pin.ArchivedAt = resolvedAt;
+
+                for (var i = 0; i < 3; i++)
+                {
+                    var user = NextParticipant(participants, pin.CreatedByUser, ref participantCursor);
+                    var confirmation = BuildResolveConfirmation(pin, user, resolvedAt.AddMinutes(-(18 - i * 5)));
+                    confirmations.Add(confirmation);
+                    usedPairs.Add($"{pin.Id}:{user.Id}");
+
+                    if (i == 2)
+                    {
+                        pin.ResolvedByUser = user;
+                        pin.ResolvedByUserId = user.Id;
+                    }
+                }
+            }
+
+            foreach (var pin in orderedPins.Take(14))
+            {
+                if (pin.IsResolved)
+                {
+                    continue;
+                }
+
+                var count = pin.Id % 3 == 0 ? 2 : 1;
+                for (var i = 0; i < count; i++)
+                {
+                    var user = NextParticipant(participants, pin.CreatedByUser, ref participantCursor);
+                    var key = $"{pin.Id}:{user.Id}";
+                    if (!usedPairs.Add(key))
+                    {
+                        continue;
+                    }
+
+                    confirmations.Add(BuildResolveConfirmation(pin, user, pin.CreatedAt.AddHours(8 + i * 4)));
+                }
+            }
+
+            return confirmations;
+        }
+
+        private static EventPinResolveConfirmation BuildResolveConfirmation(EventPin pin, User user, DateTime createdAt)
+            => new()
+            {
+                Pin = pin,
+                PinId = pin.Id,
+                User = user,
+                UserId = user.Id,
+                CreatedAt = createdAt
+            };
+
+        private static User NextParticipant(List<User> participants, User? excludedUser, ref int cursor)
+        {
+            for (var attempt = 0; attempt < participants.Count; attempt++)
+            {
+                var user = participants[cursor % participants.Count];
+                cursor++;
+
+                if (excludedUser == null || user.Id != excludedUser.Id)
+                {
+                    return user;
+                }
+            }
+
+            return participants[cursor++ % participants.Count];
         }
 
         private List<PostVote> CreatePostVotes(List<User> users, List<ForumPost> posts)
@@ -573,8 +675,12 @@ namespace Services.Seeding
                 requests.Add(new TeacherRegistrationRequest
                 {
                     Username = $"teacher-candidate-{i + 1:00}",
-                    Email = $"teacher-candidate-{i + 1:00}@mg-akp.bg",
+                    Email = $"teacher-candidate-{i + 1:00}@schoolmath.eu",
                     PasswordHash = Guid.NewGuid().ToString("N"),
+                    IsEmailConfirmed = true,
+                    EmailConfirmedAt = DateTime.UtcNow.AddDays(-(i * 4 + 1)),
+                    EmailConfirmationTokenHash = null,
+                    EmailConfirmationTokenExpiresAt = null,
                     Motivation = TeacherRequestMotivations[i % TeacherRequestMotivations.Length],
                     Status = status,
                     CreatedAt = DateTime.UtcNow.AddDays(-(i * 4 + 2)),
@@ -606,6 +712,10 @@ namespace Services.Seeding
                 BannedUntil = null,
                 BanReason = null,
                 PhotoUrl = null,
+                IsEmailConfirmed = true,
+                EmailConfirmedAt = DateTime.UtcNow.AddDays(-120),
+                EmailConfirmationTokenHash = null,
+                EmailConfirmationTokenExpiresAt = null,
                 GradeLevel = gradeLevel,
                 SchoolYearStart = schoolYearStart,
                 ScheduledDeletionAt = gradeLevel.HasValue && schoolYearStart.HasValue
@@ -694,3 +804,5 @@ namespace Services.Seeding
             string[] Descriptions);
     }
 }
+
+
