@@ -11,7 +11,8 @@ public class UserActionQuotaServiceTests
     [InlineData(UserActionQuotaType.EventPinCreate, 5)]
     [InlineData(UserActionQuotaType.ForumPostCreate, 20)]
     [InlineData(UserActionQuotaType.ForumThreadCreate, 1)]
-    [InlineData(UserActionQuotaType.ReportCreate, 5)]
+    [InlineData(UserActionQuotaType.ReportCreate, 3)]
+    [InlineData(UserActionQuotaType.ProfileUpdate, 3)]
     public async Task CheckAsync_WhenLimitReached_ReturnsBlocked(UserActionQuotaType actionType, int limit)
     {
         await using var db = CreateDbContext();
@@ -35,7 +36,6 @@ public class UserActionQuotaServiceTests
     [Theory]
     [InlineData(UserActionQuotaType.EventPinCreate, 5)]
     [InlineData(UserActionQuotaType.ForumPostCreate, 20)]
-    [InlineData(UserActionQuotaType.ReportCreate, 5)]
     public async Task CheckAsync_AfterHourlyWindow_AllowsAgain(UserActionQuotaType actionType, int limit)
     {
         await using var db = CreateDbContext();
@@ -49,6 +49,42 @@ public class UserActionQuotaServiceTests
         var service = new UserActionQuotaService(db);
 
         var result = await service.CheckAsync(user.Id, actionType);
+
+        Assert.True(result.Allowed);
+    }
+
+    [Fact]
+    public async Task CheckAsync_AfterReportDailyWindow_AllowsAgain()
+    {
+        await using var db = CreateDbContext();
+        var user = CreateUser();
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        AddQuotaEvents(db, user, UserActionQuotaType.ReportCreate, 3, DateTime.UtcNow.AddHours(-25));
+        await db.SaveChangesAsync();
+
+        var service = new UserActionQuotaService(db);
+
+        var result = await service.CheckAsync(user.Id, UserActionQuotaType.ReportCreate);
+
+        Assert.True(result.Allowed);
+    }
+
+    [Fact]
+    public async Task CheckAsync_AfterProfileDailyWindow_AllowsAgain()
+    {
+        await using var db = CreateDbContext();
+        var user = CreateUser();
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        AddQuotaEvents(db, user, UserActionQuotaType.ProfileUpdate, 3, DateTime.UtcNow.AddHours(-25));
+        await db.SaveChangesAsync();
+
+        var service = new UserActionQuotaService(db);
+
+        var result = await service.CheckAsync(user.Id, UserActionQuotaType.ProfileUpdate);
 
         Assert.True(result.Allowed);
     }

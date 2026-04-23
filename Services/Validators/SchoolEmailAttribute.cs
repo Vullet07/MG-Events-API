@@ -16,7 +16,7 @@ namespace Services.Validators
             var email = value as string;
             if (string.IsNullOrWhiteSpace(email))
             {
-                return new ValidationResult("Имейл адресът е задължителен.");
+                return ValidationResult.Success;
             }
 
             var normalized = email.Trim();

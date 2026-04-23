@@ -18,9 +18,19 @@ public class SchoolEmailAttributeTests
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void IsValid_AllowsEmptyValue_ForOptionalDtoFields(string? email)
+    {
+        var result = _attribute.GetValidationResult(email, new ValidationContext(new object()));
+
+        Assert.Equal(ValidationResult.Success, result);
+    }
+
+    [Theory]
     [InlineData("student@gmail.com", "Имейл адресът трябва да завършва на @schoolmath.eu.")]
     [InlineData("invalid-email", "Невалиден имейл адрес.")]
-    [InlineData("", "Имейл адресът е задължителен.")]
     public void IsValid_RejectsInvalidOrNonSchoolEmail(string email, string expectedMessage)
     {
         var result = _attribute.GetValidationResult(email, new ValidationContext(new object()));

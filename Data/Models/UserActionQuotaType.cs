@@ -5,6 +5,7 @@ namespace Data.Models
         EventPinCreate = 1,
         ForumPostCreate = 2,
         ForumThreadCreate = 3,
-        ReportCreate = 4
+        ReportCreate = 4,
+        ProfileUpdate = 5
     }
 }

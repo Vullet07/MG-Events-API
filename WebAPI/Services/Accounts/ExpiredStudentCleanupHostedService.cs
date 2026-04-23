@@ -29,12 +29,23 @@ namespace WebAPI.Services.Accounts
                         _logger.LogInformation("Expired student cleanup removed {DeletedCount} accounts.", deletedCount);
                     }
                 }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Expired student cleanup failed.");
                 }
 
-                await Task.Delay(PollInterval, stoppingToken);
+                try
+                {
+                    await Task.Delay(PollInterval, stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
         }
     }

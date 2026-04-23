@@ -6,6 +6,9 @@ namespace Services.Dtos
 {
     public class UpdateUserDto
     {
+        [MaxLength(100)]
+        [MinLength(4)]
+        [UsernamePolicy]
         public string? Username { get; set; }
 
         [EmailAddress]

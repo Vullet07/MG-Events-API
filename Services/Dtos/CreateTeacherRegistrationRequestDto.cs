@@ -6,14 +6,18 @@ namespace Services.Dtos
 {
     public class CreateTeacherRegistrationRequestDto
     {
+        [Required]
         [MaxLength(100)]
         [MinLength(4)]
+        [UsernamePolicy]
         public required string Username { get; set; }
 
+        [Required]
         [EmailAddress]
         [SchoolEmail]
         public required string Email { get; set; }
 
+        [Required]
         [PasswordPolicy]
         public required string Password { get; set; }
 

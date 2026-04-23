@@ -7,8 +7,11 @@ using Microsoft.EntityFrameworkCore;
 using Services.AuthUserService;
 using Services.Dtos;
 using Services.Maps;
+using System.Globalization;
 using WebAPI.Extensions;
+using WebAPI.Models;
 using WebAPI.Services.Accounts;
+using WebAPI.Services.Quotas;
 
 namespace WebAPI.Controllers
 {
@@ -22,19 +25,22 @@ namespace WebAPI.Controllers
         private readonly IAuthUserService _authUser;
         private readonly IWebHostEnvironment _env;
         private readonly IUserLifecycleService _userLifecycleService;
+        private readonly IUserActionQuotaService _quotaService;
 
         public UserController(
             AppDbContext db,
             IPasswordHasher<User> passwordHasher,
             IAuthUserService authUser,
             IWebHostEnvironment env,
-            IUserLifecycleService userLifecycleService)
+            IUserLifecycleService userLifecycleService,
+            IUserActionQuotaService quotaService)
         {
             _db = db;
             _passwordHasher = passwordHasher;
             _authUser = authUser;
             _env = env;
             _userLifecycleService = userLifecycleService;
+            _quotaService = quotaService;
         }
 
         [Authorize(Roles = "Admin,Teacher")]
@@ -277,24 +283,47 @@ namespace WebAPI.Controllers
             if (_authUser.Role != Role.Admin && user.Id != _authUser.Id)
                 return ToApiValidationFail("Only admins can update other users' info", 400);
 
+            var isSelfProfileChange = user.Id == _authUser.Id;
+            var normalizedEmail = string.Empty;
+            var nextUsername = string.Empty;
+            var usernameChanged = false;
+            var photoChanged = false;
+
             if (!string.IsNullOrEmpty(dto.Email))
             {
-                var normalizedEmail = dto.Email.Trim().ToLowerInvariant();
+                normalizedEmail = dto.Email.Trim().ToLowerInvariant();
                 if (await _db.Users.AnyAsync(u => u.Email == normalizedEmail && u.Id != id))
                     return ToApiValidationFail("Email is already used by another user.", 400);
-
-                user.Email = normalizedEmail;
             }
 
             if (!string.IsNullOrWhiteSpace(dto.Username))
             {
-                var username = dto.Username.Trim();
-                if (await _db.Users.AnyAsync(u => u.Username == username && u.Id != id))
+                nextUsername = dto.Username.Trim();
+                if (await _db.Users.AnyAsync(u => u.Username == nextUsername && u.Id != id))
                     return ToApiValidationFail("Username is already used by another user.", 400);
-                user.Username = username;
+
+                usernameChanged = !string.Equals(user.Username, nextUsername, StringComparison.Ordinal);
             }
 
             if (!string.IsNullOrEmpty(dto.PhotoUrl))
+            {
+                photoChanged = !string.Equals(user.PhotoUrl, dto.PhotoUrl, StringComparison.Ordinal);
+            }
+
+            if (isSelfProfileChange && (usernameChanged || photoChanged))
+            {
+                var quota = await _quotaService.CheckAsync(user.Id, UserActionQuotaType.ProfileUpdate);
+                if (!quota.Allowed)
+                    return ToQuotaFail(quota);
+            }
+
+            if (!string.IsNullOrEmpty(dto.Email))
+                user.Email = normalizedEmail;
+
+            if (usernameChanged)
+                user.Username = nextUsername;
+
+            if (photoChanged)
                 user.PhotoUrl = dto.PhotoUrl;
 
             if (dto.Role.HasValue)
@@ -305,18 +334,32 @@ namespace WebAPI.Controllers
 
             await _db.SaveChangesAsync();
 
+            if (isSelfProfileChange && (usernameChanged || photoChanged))
+            {
+                await _quotaService.RecordAsync(user.Id, UserActionQuotaType.ProfileUpdate);
+            }
+
             return ToApiValidationSuccess(ToUserDto(user, true), "User updated successfully.");
         }
 
         [Authorize(Roles = "Admin")]
         [HttpGet("teacher-requests")]
-        public async Task<IActionResult> GetTeacherRequests()
+        public async Task<IActionResult> GetTeacherRequests([FromQuery] string? sort = null)
         {
-            var requests = await _db.TeacherRegistrationRequests
+            IQueryable<TeacherRegistrationRequest> query = _db.TeacherRegistrationRequests
                 .Where(r => r.IsEmailConfirmed)
-                .Include(r => r.ReviewedBy)
-                .OrderBy(r => r.Status)
-                .ThenByDescending(r => r.CreatedAt)
+                .Include(r => r.ReviewedBy);
+
+            query = (sort ?? "status").Trim().ToLowerInvariant() switch
+            {
+                "newest" => query.OrderByDescending(r => r.CreatedAt),
+                "oldest" => query.OrderBy(r => r.CreatedAt),
+                "username" => query.OrderBy(r => r.Username),
+                "email" => query.OrderBy(r => r.Email),
+                "status" or _ => query.OrderBy(r => r.Status).ThenByDescending(r => r.CreatedAt)
+            };
+
+            var requests = await query
                 .Select(r => new TeacherRegistrationRequestDto
                 {
                     Id = r.Id,
@@ -407,35 +450,92 @@ namespace WebAPI.Controllers
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UploadProfilePhoto(IFormFile file)
         {
-            if (file == null || file.Length == 0)
-                return ToApiValidationFail("No file uploaded.");
+            var user = await GetCurrentUserAsync();
+            if (user == null)
+                return ToApiValidationFail(_authUser.Id == null ? "User not authenticated." : "User not found.", _authUser.Id == null ? 401 : 404);
 
+            return await ApplyProfileUpdateAsync(user, null, file, requireFile: true);
+        }
+
+        [HttpPut("profile")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> UpdateMyProfile([FromForm] UpdateProfileForm form)
+        {
+            var user = await GetCurrentUserAsync();
+            if (user == null)
+                return ToApiValidationFail(_authUser.Id == null ? "User not authenticated." : "User not found.", _authUser.Id == null ? 401 : 404);
+
+            return await ApplyProfileUpdateAsync(user, form.Username, form.File, requireFile: false);
+        }
+
+        private async Task<User?> GetCurrentUserAsync()
+        {
             var userId = _authUser.Id;
             if (userId == null)
-                return ToApiValidationFail("User not authenticated.", 401);
+                return null;
 
-            var user = await _db.Users.FindAsync(userId);
-            if (user == null)
-                return ToApiValidationFail("User not found.", 404);
+            return await _db.Users.FindAsync(userId.Value);
+        }
 
-            var webRoot = _env.WebRootPath ?? Path.Combine(_env.ContentRootPath, "wwwroot");
-            var relativePath = Path.Combine("uploads", "users", userId.Value.ToString());
-            var savePath = Path.Combine(webRoot, relativePath);
-            Directory.CreateDirectory(savePath);
+        private async Task<IActionResult> ApplyProfileUpdateAsync(User user, string? rawUsername, IFormFile? file, bool requireFile)
+        {
+            var hasFile = file is { Length: > 0 };
+            if (requireFile && !hasFile)
+                return ToApiValidationFail("No file uploaded.");
 
-            var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
-            var fullPath = Path.Combine(savePath, fileName);
+            if (hasFile && (string.IsNullOrWhiteSpace(file!.ContentType) ||
+                            !file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)))
+                return ToApiValidationFail("Към профила може да се качва само изображение.", 400);
 
-            await using (var stream = System.IO.File.Create(fullPath))
+            var nextUsername = rawUsername?.Trim();
+            var usernameChanged = !string.IsNullOrWhiteSpace(nextUsername) &&
+                                  !string.Equals(user.Username, nextUsername, StringComparison.Ordinal);
+
+            if (usernameChanged &&
+                await _db.Users.AnyAsync(u => u.Username == nextUsername && u.Id != user.Id))
             {
-                await file.CopyToAsync(stream);
+                return ToApiValidationFail("Username is already used by another user.", 400);
             }
 
-            var baseUrl = $"{Request.Scheme}://{Request.Host}";
-            user.PhotoUrl = $"{baseUrl}/{relativePath.Replace("\\", "/")}/{fileName}";
-            await _db.SaveChangesAsync();
+            var profileChanged = usernameChanged || hasFile;
+            if (!profileChanged)
+            {
+                return ToApiValidationSuccess(ToUserDto(user, true), "Няма нови промени по профила.");
+            }
 
-            return ToApiValidationSuccess(ToUserDto(user, true), "Profile photo updated.");
+            var quota = await _quotaService.CheckAsync(user.Id, UserActionQuotaType.ProfileUpdate);
+            if (!quota.Allowed)
+                return ToQuotaFail(quota);
+
+            var webRoot = _env.WebRootPath ?? Path.Combine(_env.ContentRootPath, "wwwroot");
+
+            if (usernameChanged)
+            {
+                user.Username = nextUsername!;
+            }
+
+            if (hasFile)
+            {
+                var relativePath = Path.Combine("uploads", "users", user.Id.ToString());
+                var savePath = Path.Combine(webRoot, relativePath);
+                Directory.CreateDirectory(savePath);
+
+                var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file!.FileName)}";
+                var fullPath = Path.Combine(savePath, fileName);
+
+                await using (var stream = System.IO.File.Create(fullPath))
+                {
+                    await file.CopyToAsync(stream);
+                }
+
+                var baseUrl = $"{Request.Scheme}://{Request.Host}";
+                user.PhotoUrl = $"{baseUrl}/{relativePath.Replace("\\", "/")}/{fileName}";
+            }
+
+            await _db.SaveChangesAsync();
+            await _quotaService.RecordAsync(user.Id, UserActionQuotaType.ProfileUpdate);
+
+            return ToApiValidationSuccess(ToUserDto(user, true), "Профилът е обновен успешно.");
         }
 
         [Authorize(Roles = "Admin,Teacher")]
@@ -519,6 +619,13 @@ namespace WebAPI.Controllers
 
             return ToApiValidationSuccess(
                 $"User deleted successfully. Removed {deletionSummary.RemovedThreads} threads, {deletionSummary.RemovedPosts} standalone posts and {deletionSummary.RemovedPins} pins.");
+        }
+
+        private IActionResult ToQuotaFail(ActionQuotaCheckResult quota)
+        {
+            var retryAfterSeconds = Math.Max(1, (int)Math.Ceiling(quota.RetryAfter.TotalSeconds));
+            Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+            return StatusCode(StatusCodes.Status429TooManyRequests, ApiResponse.Fail(quota.Message));
         }
 
         private UserDto ToUserDto(User user, bool includeStats)

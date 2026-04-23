@@ -105,14 +105,14 @@ public class ActionQuotaControllerTests
     }
 
     [Fact]
-    public async Task ReportsCreate_WhenHourlyLimitReached_Returns429()
+    public async Task ReportsCreate_WhenDailyLimitReached_Returns429()
     {
         await using var db = CreateDbContext();
         var reporter = CreateUser("report-quota-user");
         var target = CreateUser("reported-user");
         db.Users.AddRange(reporter, target);
         await db.SaveChangesAsync();
-        AddQuotaEvents(db, reporter, UserActionQuotaType.ReportCreate, 5);
+        AddQuotaEvents(db, reporter, UserActionQuotaType.ReportCreate, 3);
         await db.SaveChangesAsync();
 
         var controller = WithHttpContext(new ReportsController(
@@ -129,6 +129,60 @@ public class ActionQuotaControllerTests
         });
 
         AssertRateLimited(result);
+    }
+
+    [Fact]
+    public async Task ReportsCreate_WhenPostAlreadyReportedBySameUser_Returns409()
+    {
+        await using var db = CreateDbContext();
+        var reporter = CreateUser("duplicate-report-user");
+        var thread = new ForumThread
+        {
+            Title = "Thread with reported post",
+            CreatedByUser = reporter,
+            CreatedAt = DateTime.UtcNow
+        };
+        var post = new ForumPost
+        {
+            Title = "Reported post",
+            Content = "Reported content",
+            User = reporter,
+            Thread = thread,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        db.Users.Add(reporter);
+        db.ForumThreads.Add(thread);
+        db.ForumPosts.Add(post);
+        await db.SaveChangesAsync();
+
+        db.Reports.Add(new Report
+        {
+            Reporter = reporter,
+            TargetType = ReportTargetType.Post,
+            TargetId = post.Id,
+            Reason = "Duplicate"
+        });
+        await db.SaveChangesAsync();
+
+        var controller = WithHttpContext(new ReportsController(
+            db,
+            new TestAuthUserService(reporter),
+            new TestUserLifecycleService(),
+            new UserActionQuotaService(db)));
+
+        var result = await controller.Create(new CreateReportDto
+        {
+            TargetType = ReportTargetType.Post,
+            TargetId = post.Id,
+            Reason = "Duplicate again"
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var payload = Assert.IsType<ApiResponse>(ok.Value);
+        Assert.False(payload.Success);
+        Assert.Contains("Вече", payload.Message);
+        Assert.Equal(0, await db.UserActionQuotaEvents.CountAsync());
     }
 
     private static AppDbContext CreateDbContext()

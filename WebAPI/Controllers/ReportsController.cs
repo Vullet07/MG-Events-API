@@ -44,10 +44,6 @@ namespace WebAPI.Controllers
             if (reporter == null)
                 return ToApiValidationFail("User not found.", 401);
 
-            var quota = await _quotaService.CheckAsync(reporter.Id, UserActionQuotaType.ReportCreate);
-            if (!quota.Allowed)
-                return ToQuotaFail(quota);
-
             var exists = dto.TargetType switch
             {
                 ReportTargetType.Post => await _db.ForumPosts.AnyAsync(x => x.Id == dto.TargetId && !x.IsDeleted),
@@ -59,6 +55,21 @@ namespace WebAPI.Controllers
 
             if (!exists)
                 return ToApiValidationFail("Reported target not found.", 404);
+
+            if (dto.TargetType == ReportTargetType.Post)
+            {
+                var alreadyReported = await _db.Reports.AnyAsync(report =>
+                    report.TargetType == ReportTargetType.Post &&
+                    report.TargetId == dto.TargetId &&
+                    EF.Property<int>(report, "ReporterId") == reporter.Id);
+
+                if (alreadyReported)
+                    return ToApiValidationFail("Вече си подал сигнал за тази публикация.", 409);
+            }
+
+            var quota = await _quotaService.CheckAsync(reporter.Id, UserActionQuotaType.ReportCreate);
+            if (!quota.Allowed)
+                return ToQuotaFail(quota);
 
             var report = new Report
             {
@@ -94,13 +105,23 @@ namespace WebAPI.Controllers
 
         [Authorize(Roles = "Admin")]
         [HttpGet]
-        public async Task<IActionResult> GetAll()
+        public async Task<IActionResult> GetAll([FromQuery] string? sort = null)
         {
-            var reports = await _db.Reports
+            var query = _db.Reports
                 .Include(r => r.Reporter)
                 .Include(r => r.ResolvedBy)
-                .OrderBy(r => r.Status)
-                .ThenByDescending(r => r.CreatedAt)
+                .AsQueryable();
+
+            query = (sort ?? "status").Trim().ToLowerInvariant() switch
+            {
+                "newest" => query.OrderByDescending(r => r.CreatedAt),
+                "oldest" => query.OrderBy(r => r.CreatedAt),
+                "target" => query.OrderBy(r => r.TargetType).ThenByDescending(r => r.CreatedAt),
+                "reporter" => query.OrderBy(r => r.Reporter.Username).ThenByDescending(r => r.CreatedAt),
+                "status" or _ => query.OrderBy(r => r.Status).ThenByDescending(r => r.CreatedAt)
+            };
+
+            var reports = await query
                 .ToListAsync();
 
             return ToApiValidationSuccess(await MapReportsAsync(reports));

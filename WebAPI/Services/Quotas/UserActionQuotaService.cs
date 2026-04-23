@@ -95,7 +95,8 @@ namespace WebAPI.Services.Quotas
                 UserActionQuotaType.EventPinCreate => new(5, TimeSpan.FromHours(1), "създаване на пинове"),
                 UserActionQuotaType.ForumPostCreate => new(20, TimeSpan.FromHours(1), "публикуване на коментари"),
                 UserActionQuotaType.ForumThreadCreate => new(1, TimeSpan.FromHours(24), "създаване на теми"),
-                UserActionQuotaType.ReportCreate => new(5, TimeSpan.FromHours(1), "подаване на сигнали"),
+                UserActionQuotaType.ReportCreate => new(3, TimeSpan.FromHours(24), "подаване на сигнали"),
+                UserActionQuotaType.ProfileUpdate => new(3, TimeSpan.FromHours(24), "обновяване на профила"),
                 _ => throw new ArgumentOutOfRangeException(nameof(actionType), actionType, null)
             };
         }

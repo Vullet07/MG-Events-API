@@ -35,12 +35,23 @@ namespace WebAPI.Services.Pins
                         _logger.LogInformation("Resolved pin cleanup removed {DeletedCount} archived pins.", deletedCount);
                     }
                 }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Resolved pin cleanup failed.");
                 }
 
-                await Task.Delay(PollInterval, stoppingToken);
+                try
+                {
+                    await Task.Delay(PollInterval, stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
         }
 
